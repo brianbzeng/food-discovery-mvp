@@ -10,6 +10,7 @@ export async function GET(request: Request) {
       "content-disposition":
         'attachment; filename="food-discovery-account-export.json"',
       "cache-control": "private, no-store",
+      vary: "Cookie",
     });
     for (const cookie of identity.setCookies) {
       headers.append("set-cookie", cookie);
