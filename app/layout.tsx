@@ -39,9 +39,9 @@ export async function generateMetadata(): Promise<Metadata> {
       type: "website",
       images: [
         {
-          url: `${origin}/og.jpg`,
+          url: `${origin}/og.png`,
           width: 1672,
-          height: 940,
+          height: 941,
           alt: "Find the food you mean — food discovery product preview",
         },
       ],
@@ -50,7 +50,7 @@ export async function generateMetadata(): Promise<Metadata> {
       card: "summary_large_image",
       title,
       description,
-      images: [`${origin}/og.jpg`],
+      images: [`${origin}/og.png`],
     },
   };
 }

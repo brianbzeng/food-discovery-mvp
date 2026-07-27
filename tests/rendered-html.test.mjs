@@ -32,6 +32,7 @@ test("server-renders the product foundation", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Food Discovery MVP<\/title>/i);
+  assert.match(html, /\/og\.png/);
   assert.match(html, /Find the food/);
   assert.match(html, /What sounds good\?/);
   assert.match(html, /independent restaurants, cafés, boba shops/i);
@@ -43,7 +44,7 @@ test("server-renders the product foundation", async () => {
 });
 
 test("keeps product safety and persistence contracts explicit", async () => {
-  const [schema, contracts, catalogStore, saveStore, accountStore, hosting, packageJson] = await Promise.all([
+  const [schema, contracts, catalogStore, saveStore, accountStore, hosting, packageJson, socialCard] = await Promise.all([
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../docs/product-contracts.md", import.meta.url), "utf8"),
     readFile(new URL("../db/catalog-store.ts", import.meta.url), "utf8"),
@@ -51,6 +52,7 @@ test("keeps product safety and persistence contracts explicit", async () => {
     readFile(new URL("../db/account-store.ts", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../public/og.png", import.meta.url)),
   ]);
 
   assert.match(schema, /restrictionEvidence/);
@@ -76,4 +78,7 @@ test("keeps product safety and persistence contracts explicit", async () => {
   assert.match(hosting, /"d1": "DB"/);
   assert.match(hosting, /"r2": "MEDIA"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+  assert.deepEqual([...socialCard.subarray(0, 8)], [
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  ]);
 });
