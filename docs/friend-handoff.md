@@ -1,16 +1,38 @@
-# Food Discovery MVP — detailed continuation handoff
+# Food Discovery MVP -- detailed continuation handoff
 
-> This document is written for the next engineer taking over the project.
-> Read the “release snapshot” and “non-negotiable invariants” first. The code,
-> migrations, and automated tests are the final authority if another document
-> disagrees.
+**Regenerated and verified:** July 26, 2026 PDT (July 27 UTC)
+
+**File format:** standalone CommonMark Markdown, UTF-8, ASCII-only punctuation.
+It can be copied, emailed, uploaded, or opened in any plain-text editor without
+smart-quote or dash encoding problems.
+
+This document is written for the next engineer taking over the project. Read
+the release snapshot and non-negotiable invariants first. The code, migrations,
+and automated tests are the final authority if another document disagrees.
+
+### Quick navigation
+
+- [Release snapshot](#0-release-snapshot)
+- [Non-negotiable invariants](#2-non-negotiable-invariants)
+- [Architecture](#4-architecture)
+- [Safety and catalog model](#6-catalog-eligibility-and-safety-model)
+- [Recommendation model](#7-recommendation-model)
+- [Party planning](#11-party-planning-foundation)
+- [Grounded RAG contracts](#12-grounded-ragassistant-contracts)
+- [HTTP API map](#13-http-api-map)
+- [D1 schema](#14-d1-schema)
+- [Cloudflare configuration](#15-cloudflare-resources-and-configuration)
+- [Migration and deployment runbook](#17-production-migration-and-deploy-runbook)
+- [Smoke tests](#18-production-smoke-test-checklist)
+- [Known limitations](#21-known-limitations-and-debt)
+- [Prioritized continuation plan](#22-prioritized-continuation-plan)
+- [First-day checklist](#23-suggested-first-day-for-the-next-engineer)
 
 ## 0. Release snapshot
 
 The implementation described below was validated, migrated, and deployed on
-July 26, 2026 PDT (July 27 UTC). The implementation commit and draft pull
-request fields are filled after the first push because this file is part of
-that commit.
+July 26, 2026 PDT (July 27 UTC). Release identifiers below are final and contain
+no placeholders.
 
 | Item | Final value |
 | --- | --- |
@@ -20,7 +42,7 @@ that commit.
 | Draft pull request | [food-discovery-mvp#1](https://github.com/brianbzeng/food-discovery-mvp/pull/1) |
 | Final local validation | July 26 PDT: `npm test` (82/82), `npm run lint`, `npm run typecheck`, `git diff --check`, six-migration fresh-D1 Wrangler smoke, generated-config audit, and Wrangler deploy dry run all passed. Production-dependency audit: 0 vulnerabilities. Swift was not installed on the Windows host, so `swift:build` was not run. |
 | Production D1 pre-change bookmark | `00000009-00000000-000050b5-43d5b896f7eb6df34acfbf3a9ed2ddef` |
-| Production migrations applied | Ledger bootstrapped only after schema verification; `0000`–`0005` are recorded. `0004_nebulous_shard.sql` and `0005_unusual_apocalypse.sql` applied successfully. |
+| Production migrations applied | Ledger bootstrapped only after schema verification; `0000`-`0005` are recorded. `0004_nebulous_shard.sql` and `0005_unusual_apocalypse.sql` applied successfully. |
 | Production Worker version/deployment ID | `90f8c890-ba06-4667-aaf0-52a288c811ec` |
 | Production URL | `https://food.brianbzeng.com` |
 | `workers.dev` URL | `https://food-discovery-mvp.bzeng9099.workers.dev` |
@@ -43,7 +65,7 @@ groups. It combines:
 - meal-aware taste learning from user interactions;
 - deterministic controlled exploration;
 - persistent anonymous profiles and saves in D1;
-- a tested API foundation for “find something for everyone” party planning;
+- a tested API foundation for "find something for everyone" party planning;
 - strict, fail-closed contracts for a future grounded RAG assistant; and
 - legal/information pages plus a custom 404.
 
@@ -95,7 +117,7 @@ These decisions protect users and must survive future refactors.
    catalog record.**
    Do not accept arbitrary client-provided preference keys for learning.
 
-6. **“Never show” is an exact restaurant exclusion.**
+6. **"Never show" is an exact restaurant exclusion.**
    It must not globally penalize all cuisines or tags associated with that
    restaurant.
 
@@ -103,10 +125,10 @@ These decisions protect users and must survive future refactors.
    Pending, declined, expired, and revoked invitations cannot influence
    scoring.
 
-8. **Party responses must not reveal another member’s raw profile or
+8. **Party responses must not reveal another member's raw profile or
    member-specific recommendation outcome.**
    The public recommendation response contains group aggregates and only the
-   caller’s own outcome.
+   caller's own outcome.
 
 9. **An LLM may select or summarize only pre-screened candidates and grounded
    claim IDs.**
@@ -220,7 +242,7 @@ flowchart TD
 - Drizzle schema definitions and generated SQL migrations
 - Cloudflare D1 for relational/state data
 - Cloudflare R2 for approved media
-- Node’s built-in test runner
+- Node's built-in test runner
 - Miniflare for isolated D1 integration tests
 
 ### Request path
@@ -289,7 +311,7 @@ The fix is intentionally conservative:
 - `resolveProductIdentity()` always delegates to guest identity.
 - `getChatGPTUser()` always returns `null`.
 - The UI says account sign-in is temporarily disabled.
-- Incoming “authenticated email” headers are ignored.
+- Incoming "authenticated email" headers are ignored.
 
 Do not reverse this by checking whether a header exists. A correct account
 implementation must:
@@ -372,8 +394,8 @@ The default new profile has:
 - `showUnknownAllergyMatches = true`; and
 - `allergenStrictness = "dish-aware"`.
 
-“Dish-aware” is not a guarantee of safety. It means a compatible dish can
-remain visible while shared-kitchen uncertainty is shown. “Strict” is the
+"Dish-aware" is not a guarantee of safety. It means a compatible dish can
+remain visible while shared-kitchen uncertainty is shown. "Strict" is the
 whole-place screening option for users who do not accept that uncertainty.
 
 ### Concrete pilot example
@@ -390,8 +412,8 @@ Fold House also has a restaurant-level shared-kitchen peanut warning. Therefore:
   cross-contact warning; and
 - strict mode excludes the restaurant candidate.
 
-This is the main regression example for the requirement “an allergy on one
-menu item must not hide an otherwise suitable restaurant.”
+This is the main regression example for the requirement "an allergy on one
+menu item must not hide an otherwise suitable restaurant."
 
 ### Unknown-evidence boundary
 
@@ -405,7 +427,7 @@ allergen conflicts always exclude the restaurant.
 
 ### Score
 
-Eligible candidates receive a 0–100 score:
+Eligible candidates receive a 0-100 score:
 
 ```text
 score =
@@ -442,7 +464,7 @@ Taste combines:
 
 - explicit user preference weights;
 - long-term learned weights; and
-- the active meal occasion’s learned weights.
+- the active meal occasion's learned weights.
 
 Weights are normalized and clamped from `-12` to `+12`.
 
@@ -525,7 +547,7 @@ dinner. The UI sends the selected occasion with interactions.
 - Positive weights remain stable.
 - Negative weights decay with a 45-day half-life.
 - Near-zero decayed values are removed.
-- Decay currently uses the profile’s shared `updated_at`, not a separate
+- Decay currently uses the profile's shared `updated_at`, not a separate
   timestamp per key or event. If precise temporal learning becomes important,
   store per-signal timestamps or compute from interaction history.
 
@@ -565,8 +587,8 @@ The latest observed metrics before the final release run were:
 
 - unsafe leaks: `0`;
 - safe sibling retained: `true`;
-- learned target rank: `2 → 1`;
-- learned target score: `64 → 67`;
+- learned target rank: `2 -> 1`;
+- learned target score: `64 -> 67`;
 - breakfast and late-night leaders matched their expected fixtures;
 - hidden-restaurant leaks: `0`; and
 - deterministic exploration covered all five tied top candidates across the
@@ -607,7 +629,7 @@ passed in the final 60-test run.
 
 ### Entry and meal selection
 
-The first discovery panel visibly asks “HUNGRY FOR” and offers all six meal
+The first discovery panel visibly asks "HUNGRY FOR" and offers all six meal
 occasions. Selecting one:
 
 - changes the active structured intent;
@@ -664,8 +686,8 @@ audit and feedback process do not yet exist.
 
 ### Product promise
 
-The party service is designed around “find something for everyone.” It treats
-every accepted member’s restrictions as hard gates, then balances soft taste
+The party service is designed around "find something for everyone." It treats
+every accepted member's restrictions as hard gates, then balances soft taste
 preferences fairly.
 
 ### Lifecycle
@@ -673,7 +695,7 @@ preferences fairly.
 1. A guest principal creates a party and becomes its accepted creator member.
 2. Only `parties.creator_principal_id` can create or revoke invitations.
 3. An invitation generates 32 random bytes, represented as an opaque token.
-4. Only the token’s SHA-256 hash is stored in D1.
+4. Only the token's SHA-256 hash is stored in D1.
 5. The plaintext token is returned once for manual sharing.
 6. The token expires after seven days.
 7. Accepting or declining clears the stored token hash, preventing replay.
@@ -705,7 +727,7 @@ For every accepted member:
 - each dish is evaluated against their allergens and dietary restrictions;
 - a `contains` record vetoes that dish;
 - unknown dietary evidence is fail-closed;
-- unknown allergen evidence follows that member’s warning/exclude setting;
+- unknown allergen evidence follows that member's warning/exclude setting;
 - cross-contact follows dish-aware warning versus strict exclusion; and
 - their hidden restaurants are excluded.
 
@@ -724,12 +746,12 @@ The public response includes:
 - overall and aggregate fairness measures;
 - aggregate preference-match counts;
 - a generic safety summary; and
-- only the caller’s selected dish/satisfaction/confirmation requirement.
+- only the caller's selected dish/satisfaction/confirmation requirement.
 
 It excludes:
 
 - other principals;
-- other members’ allergens/dietary restrictions;
+- other members' allergens/dietary restrictions;
 - raw preference keys;
 - raw member outcomes;
 - member-specific warnings; and
@@ -882,7 +904,7 @@ All identity-aware responses may set the guest/session cookies.
 | `GET` | `/api/v1/media/{dishCardId}` | Approved, unexpired R2 media |
 | `GET` | `/api/v1/account` | Guest/account-state counts |
 | `GET` | `/api/v1/account/export` | Private JSON download |
-| `DELETE` | `/api/v1/account` | Delete current principal’s implemented data |
+| `DELETE` | `/api/v1/account` | Delete current principal's implemented data |
 | `GET/POST` | `/api/v1/parties` | Party list/create |
 | `GET` | `/api/v1/parties/{partyId}` | Authorized party view |
 | `POST` | `/api/v1/parties/{partyId}/invitations` | Create one-time invite |
@@ -1065,7 +1087,7 @@ migration commands because its `migrations_dir` is unambiguous.
 **Release preflight history:** a generated config was initially observed with
 duplicate `DB`, `MEDIA`, and `nodejs_compat` entries and both
 `../../migrations` and `../../drizzle`. It came from combining root Wrangler
-configuration with Vite’s inline binding configuration. The configuration was
+configuration with Vite's inline binding configuration. The configuration was
 then corrected, and the next generated artifact showed one `DB`, one `MEDIA`,
 one `nodejs_compat`, and `../../drizzle`.
 
@@ -1076,7 +1098,7 @@ migrations and generated `dist/server/wrangler.json` for Worker deployment.
 ### Domain ownership
 
 The custom domain is not declared in the current `wrangler.jsonc`; it is
-managed in Cloudflare’s Worker Domains/Routes UI. Confirm
+managed in Cloudflare's Worker Domains/Routes UI. Confirm
 `food.brianbzeng.com` points directly to `food-discovery-mvp`.
 
 The earlier `near-and-dear-food-gateway` experiment is not required for the
@@ -1171,7 +1193,7 @@ Rendered-page tests require a fresh build first.
 Production changes should be performed from a clean, reviewed, pushed commit.
 Never deploy an untracked local state that the next engineer cannot recover.
 
-### Phase A — preflight
+### Phase A -- preflight
 
 ```powershell
 git status --short
@@ -1187,7 +1209,7 @@ Expected Wrangler major version: 4.
 Run all validation commands in section 16. Confirm the diff contains no
 credentials, exports, invite tokens, or unrelated user work.
 
-### Phase B — capture rollback references
+### Phase B -- capture rollback references
 
 Capture a D1 Time Travel bookmark before any production write:
 
@@ -1205,7 +1227,7 @@ npx.cmd wrangler versions list --name food-discovery-mvp --json
 
 Record the currently deployed version.
 
-### Phase C — verify the migration ledger
+### Phase C -- verify the migration ledger
 
 ```powershell
 npx.cmd wrangler d1 execute site-creator-d1 --remote --config wrangler.jsonc --command "SELECT name FROM sqlite_master WHERE type='table' AND name='d1_migrations';"
@@ -1215,14 +1237,14 @@ npx.cmd wrangler d1 migrations list site-creator-d1 --remote --config wrangler.j
 
 #### One-time historical ledger issue
 
-Before this release, remote D1 had the effects of migrations `0000`–`0003` but
+Before this release, remote D1 had the effects of migrations `0000`-`0003` but
 did not have a `d1_migrations` table. If the root release task has already
 bootstrapped it, do nothing.
 
 If it is still missing:
 
 1. Stop.
-2. Compare the actual schema/data to migrations `0000`–`0003`.
+2. Compare the actual schema/data to migrations `0000`-`0003`.
 3. Confirm `0004` columns and `0005` tables are absent.
 4. Keep the Time Travel bookmark.
 5. Only then create the ledger and record the four already-applied migrations.
@@ -1249,7 +1271,7 @@ The historical applied names are:
 Do not mark a migration applied merely to silence Wrangler. The schema must
 actually match.
 
-### Phase D — apply production migrations
+### Phase D -- apply production migrations
 
 After `migrations list` shows only the expected pending migrations:
 
@@ -1271,7 +1293,7 @@ Expected pilot counts after `0004` are 7 restaurants, 14 published dishes,
 and 29 restriction-evidence records. Investigate rather than forcing counts if
 production has intentionally changed.
 
-### Phase E — build and inspect deployment artifact
+### Phase E -- build and inspect deployment artifact
 
 ```powershell
 npm.cmd run build
@@ -1300,7 +1322,7 @@ deploy the application from root `wrangler.jsonc`; that file is the canonical
 migration and binding source, while the generated config describes the Vite
 artifact layout.
 
-### Phase F — deploy
+### Phase F -- deploy
 
 ```powershell
 npx.cmd wrangler deploy --config dist/server/wrangler.json
@@ -1550,7 +1572,7 @@ There is no finished admin moderation UI or public ingestion pipeline.
 - Seven restaurants is insufficient for meaningful real-world model quality.
 - Evidence coverage is intentionally synthetic.
 - No reviews, ordering, payments, promotions, or uploads.
-- Product/consumer name is still a working title; “Near and Dear” is not fully
+- Product/consumer name is still a working title; "Near and Dear" is not fully
   codified in repository metadata.
 
 ### Authentication/privacy
@@ -1642,7 +1664,7 @@ external communication.
 
 ## 22. Prioritized continuation plan
 
-### P0 — preserve release integrity
+### P0 -- preserve release integrity
 
 - [x] Replace every release-snapshot placeholder.
 - [x] Ensure the final commit is pushed and the draft PR contains the exact
@@ -1658,7 +1680,7 @@ external communication.
 - [x] Keep the pre-change D1 bookmark and previous Worker version in a private
   operator log.
 
-### P1 — make guest testing dependable
+### P1 -- make guest testing dependable
 
 - [ ] Add CI for install, typecheck, lint, build, tests, audit summary, and
   Wrangler dry run.
@@ -1671,20 +1693,20 @@ external communication.
 - [ ] Add a staging Worker/D1/R2 environment and a migration rehearsal step.
 - [ ] Update README, product contracts, roadmap, and Swift models.
 
-### P1 — make party planning usable
+### P1 -- make party planning usable
 
 - [ ] Build party list/create/detail screens.
 - [ ] Build invite creation UI that displays the token/link once.
 - [ ] Build a join page with the token in URL fragment and POST it from the
   browser; never put it in query strings.
 - [ ] Show accepted/pending status without exposing profiles.
-- [ ] Render group fairness and only the viewer’s own dish outcome.
-- [ ] Add invitation resend as “revoke old + create new.”
+- [ ] Render group fairness and only the viewer's own dish outcome.
+- [ ] Add invitation resend as "revoke old + create new."
 - [ ] Add accepted-member leave/remove and creator-transfer rules.
 - [ ] Add party archive/update lifecycle and tests.
 - [ ] Add account-aware party migration only after verified auth exists.
 
-### P1 — replace demo data responsibly
+### P1 -- replace demo data responsibly
 
 - [ ] Define target geography and minimum coverage.
 - [ ] Import candidates into quarantine.
@@ -1697,7 +1719,7 @@ external communication.
 - [ ] Build stale-data quarantine and operator review workflow.
 - [ ] Re-run synthetic and real-catalog safety audits before launch.
 
-### P2 — implement verified accounts
+### P2 -- implement verified accounts
 
 - [ ] Choose auth provider/trust boundary.
 - [ ] Validate cryptographic tokens at Worker.
@@ -1710,7 +1732,7 @@ external communication.
 - [ ] Add spoof/replay/wrong-audience integration tests.
 - [ ] Update legal copy and retention policy.
 
-### P2 — implement grounded RAG
+### P2 -- implement grounded RAG
 
 - [ ] Keep D1 as the authoritative eligibility/safety source.
 - [ ] Define evidence strength/freshness rules before embedding.
@@ -1724,7 +1746,7 @@ external communication.
   hallucination eval sets.
 - [ ] Add latency/cost budgets, timeouts, and safe structured fallback.
 
-### P3 — model quality
+### P3 -- model quality
 
 - [ ] Add restaurant-level result diversity without weakening hard gates.
 - [ ] Add session-only intent separate from permanent learning.
@@ -1762,7 +1784,7 @@ external communication.
 
 ## 24. Questions to resolve with the project owner
 
-- Is the final consumer name “Near and Dear,” “Food Nearby,” or something else?
+- Is the final consumer name "Near and Dear," "Food Nearby," or something else?
 - What city/region is the first real launch market?
 - What counts as a local group versus a regional chain?
 - Which allergens and dietary restrictions must launch with strong evidence?
