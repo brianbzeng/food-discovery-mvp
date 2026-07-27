@@ -154,6 +154,11 @@ export const restrictionEvidence = sqliteTable(
     status: text("status", {
       enum: ["contains", "compatible", "accommodates", "unknown"],
     }).notNull(),
+    evidenceScope: text("evidence_scope", {
+      enum: ["dish", "shared_kitchen", "venue"],
+    })
+      .notNull()
+      .default("dish"),
     sourceType: text("source_type", {
       enum: ["merchant", "official_menu", "team_review", "unknown"],
     }).notNull(),
@@ -182,6 +187,10 @@ export const tasteProfiles = sqliteTable("taste_profiles", {
   learnedWeights: text("learned_weights", { mode: "json" })
     .$type<Record<string, number>>()
     .notNull(),
+  occasionWeights: text("occasion_weights", { mode: "json" })
+    .$type<Record<string, Record<string, number>>>()
+    .notNull()
+    .default({}),
   dietaryRestrictions: text("dietary_restrictions", { mode: "json" })
     .$type<string[]>()
     .notNull(),
@@ -191,6 +200,11 @@ export const tasteProfiles = sqliteTable("taste_profiles", {
   })
     .notNull()
     .default(true),
+  allergenStrictness: text("allergen_strictness", {
+    enum: ["dish-aware", "strict"],
+  })
+    .notNull()
+    .default("dish-aware"),
   hiddenRestaurantIds: text("hidden_restaurant_ids", { mode: "json" })
     .$type<string[]>()
     .notNull(),
@@ -374,6 +388,85 @@ export const savedRestaurants = sqliteTable(
     index("saved_principal_created_idx").on(
       table.principalId,
       table.createdAt,
+    ),
+  ],
+);
+
+export const parties = sqliteTable(
+  "parties",
+  {
+    id: text("id").primaryKey(),
+    creatorPrincipalId: text("creator_principal_id").notNull(),
+    name: text("name").notNull(),
+    status: text("status", {
+      enum: ["active", "archived"],
+    })
+      .notNull()
+      .default("active"),
+    requireSharedDish: integer("require_shared_dish", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(false),
+    fairnessStrategy: text("fairness_strategy", {
+      enum: ["least-misery", "min-average"],
+    })
+      .notNull()
+      .default("least-misery"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("parties_creator_created_idx").on(
+      table.creatorPrincipalId,
+      table.createdAt,
+    ),
+    index("parties_status_updated_idx").on(table.status, table.updatedAt),
+  ],
+);
+
+export const partyMembers = sqliteTable(
+  "party_members",
+  {
+    id: text("id").primaryKey(),
+    partyId: text("party_id")
+      .notNull()
+      .references(() => parties.id, { onDelete: "cascade" }),
+    principalId: text("principal_id"),
+    displayName: text("display_name").notNull(),
+    role: text("role", {
+      enum: ["creator", "member"],
+    }).notNull(),
+    status: text("status", {
+      enum: ["invited", "accepted", "declined", "revoked"],
+    }).notNull(),
+    inviteTokenHash: text("invite_token_hash"),
+    inviteExpiresAt: integer("invite_expires_at", {
+      mode: "timestamp_ms",
+    }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    respondedAt: integer("responded_at", { mode: "timestamp_ms" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("party_member_principal_idx").on(
+      table.partyId,
+      table.principalId,
+    ),
+    uniqueIndex("party_member_invite_token_idx").on(table.inviteTokenHash),
+    index("party_member_party_status_idx").on(table.partyId, table.status),
+    index("party_member_principal_status_idx").on(
+      table.principalId,
+      table.status,
     ),
   ],
 );

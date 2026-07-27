@@ -11,6 +11,7 @@ import {
   venueTypes,
   type VenueType,
 } from "./discovery-policy";
+import { normalizeMealOccasion } from "./taste-learning";
 
 function allowedVenueTypes(values: unknown): VenueType[] {
   if (!Array.isArray(values)) return [];
@@ -78,6 +79,11 @@ export function normalizeRecommendationIntent(
       ? source.query.trim().slice(0, 160)
       : undefined;
   const radiusMeters = optionalNumber(source.radiusMeters);
+  const explorationRate = optionalNumber(source.explorationRate);
+  const explorationSeed =
+    typeof source.explorationSeed === "string"
+      ? source.explorationSeed.trim().slice(0, 120)
+      : undefined;
 
   return {
     query: query || undefined,
@@ -91,8 +97,14 @@ export function normalizeRecommendationIntent(
     priceTiers: allowedPriceTiers(source.priceTiers),
     allergens: stringList(source.allergens),
     dietaryRestrictions: stringList(source.dietaryRestrictions),
+    occasion: normalizeMealOccasion(source.occasion),
     serviceMode: allowedServiceMode(source.serviceMode),
     openNow: source.openNow === true,
+    explorationSeed: explorationSeed || undefined,
+    explorationRate:
+      explorationRate === undefined
+        ? undefined
+        : Math.max(0, Math.min(1, explorationRate)),
   };
 }
 

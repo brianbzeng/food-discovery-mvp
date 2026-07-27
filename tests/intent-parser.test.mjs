@@ -28,6 +28,21 @@ test("does not mistake a milk-tea craving for a milk allergy", () => {
   ]);
 });
 
+test("recognizes every meal choice exposed by onboarding", () => {
+  const examples = {
+    breakfast: "breakfast",
+    brunch: "brunch",
+    lunch: "lunch",
+    dinner: "dinner",
+    "late night": "late-night",
+    snack: "snack",
+  };
+
+  for (const [message, occasion] of Object.entries(examples)) {
+    assert.equal(parseDiscoveryIntent(message).occasion, occasion);
+  }
+});
+
 test("assistant summaries preserve safety and local eligibility language", () => {
   const intent = parseDiscoveryIntent("vegan cafe");
   assert.match(assistantSummary(intent, 2), /eligible local matches/);

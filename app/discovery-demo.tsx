@@ -13,6 +13,7 @@ import { venueLabel } from "./lib/discovery-policy";
 import {
   rankTasteCards,
   scoreTasteCard,
+  type MealOccasion,
   type TasteEventType,
 } from "./lib/taste-learning";
 import {
@@ -20,6 +21,7 @@ import {
   dietaryOptions,
   restrictionLabel,
 } from "./lib/restrictions";
+import { SiteFooter } from "./components/site-footer";
 
 const filters = [
   "Open now",
@@ -29,14 +31,26 @@ const filters = [
   "Boba & tea",
 ];
 
+const mealChoices: Array<{ key: MealOccasion; label: string }> = [
+  { key: "breakfast", label: "Breakfast" },
+  { key: "brunch", label: "Brunch" },
+  { key: "lunch", label: "Lunch" },
+  { key: "dinner", label: "Dinner" },
+  { key: "late-night", label: "Late night" },
+  { key: "snack", label: "Snack" },
+];
+
 type PublicTasteProfile = {
+  explicitPreferences: Record<string, number>;
   learnedWeights: Record<string, number>;
+  occasionWeights: Record<string, Record<string, number>>;
   strongestSignals: string[];
   totalSignals: number;
   version: number;
   dietaryRestrictions: string[];
   allergens: string[];
   showUnknownAllergyMatches: boolean;
+  allergenStrictness: "dish-aware" | "strict";
 };
 
 type SyncState = "loading" | "saved" | "saving" | "unavailable";
@@ -75,13 +89,27 @@ type AccountSummary = {
 
 type FeedResponse = {
   recommendations: Array<{
+    restaurantId: string;
     dishCardId: string;
     score: number;
     warnings: Array<{
-      code: "allergen-unknown" | "stale-source" | "service-unverified";
+      code:
+        | "allergen-unknown"
+        | "cross-contact"
+        | "stale-source"
+        | "service-unverified";
       message: string;
     }>;
     place: {
+      restaurantName: string;
+      title: string;
+      venueType: DiscoveryCard["venueType"];
+      ownershipType: DiscoveryCard["ownershipType"];
+      neighborhood: string;
+      cuisineTags: string[];
+      dishTags: string[];
+      priceDisplay?: string;
+      serviceModes: string[];
       evidence: Array<{
         restrictionKey: string;
         status: "contains" | "compatible" | "accommodates" | "unknown";
@@ -110,39 +138,75 @@ function venueTypesForFilters(activeFilters: string[]) {
 }
 
 function cardsFromFeed(feed: FeedResponse): DiscoveryCard[] {
-  return feed.recommendations.flatMap((recommendation) => {
-    const card = demoCards.find(
-      (candidate) => candidate.id === recommendation.dishCardId,
-    );
-    if (!card) return [];
+  return feed.recommendations.map((recommendation) => {
+    const card =
+      demoCards.find(
+        (candidate) => candidate.id === recommendation.dishCardId,
+      ) ??
+      demoCards.find(
+        (candidate) =>
+          candidate.restaurantId === recommendation.restaurantId,
+      ) ??
+      demoCards[0];
+    const place = recommendation.place;
 
     const unknownWarning = recommendation.warnings.find(
       (warning) => warning.code === "allergen-unknown",
     );
+    const crossContactWarning = recommendation.warnings.find(
+      (warning) => warning.code === "cross-contact",
+    );
+    const safetyWarning = unknownWarning ?? crossContactWarning;
     const evidence = recommendation.place.evidence.find(
       (item) =>
         item.status === "compatible" || item.status === "accommodates",
     );
 
-    return [
-      {
+    return {
         ...card,
+        id: recommendation.dishCardId,
+        restaurantId: recommendation.restaurantId,
+        restaurant: place.restaurantName,
+        dish: place.title,
+        cuisine: place.cuisineTags[0] ?? venueLabel(place.venueType),
+        venueType: place.venueType,
+        ownershipType: place.ownershipType,
+        localityLabel:
+          place.ownershipType === "independent"
+            ? "Independent local business"
+            : "Small local restaurant group",
+        neighborhood: place.neighborhood,
+        price: place.priceDisplay ?? card.price,
+        tags: place.dishTags,
+        preferenceKeys: [
+          `venue:${place.venueType}`,
+          `locality:${place.ownershipType}`,
+          `neighborhood:${place.neighborhood}`,
+          ...place.cuisineTags.map((tag) => `cuisine:${tag}`),
+          ...place.dishTags.map((tag) => `tag:${tag}`),
+        ],
+        serviceModes: place.serviceModes,
         match: recommendation.score,
-        allergyStatus: unknownWarning ? "unknown" : evidence ? "verified" : card.allergyStatus,
+        allergyStatus: safetyWarning
+          ? "unknown"
+          : evidence
+            ? "verified"
+            : card.allergyStatus,
         allergyLabel: unknownWarning
           ? "Allergy information unknown"
-          : evidence
-            ? `${restrictionLabel(evidence.restrictionKey)} evidence available`
-            : card.allergyLabel,
+          : crossContactWarning
+            ? "Dish evidence found; cross-contact unknown"
+            : evidence
+              ? `${restrictionLabel(evidence.restrictionKey)} evidence available`
+              : card.allergyLabel,
         allergyDetail:
-          unknownWarning?.message ??
+          safetyWarning?.message ??
           (evidence
             ? `${evidence.status === "compatible" ? "Marked compatible" : "Accommodation reported"} · ${evidence.sourceType.replace("_", " ")}`
             : card.allergyDetail),
         evidenceSource: evidence?.sourceType.replace("_", " "),
         evidenceVerifiedAt: evidence?.verifiedAt,
-      },
-    ];
+      };
   });
 }
 
@@ -150,9 +214,11 @@ async function fetchFeedCards(
   query: string | undefined,
   filtersForRequest: string[],
   coordinates?: Coordinates,
+  occasion?: MealOccasion,
 ): Promise<DiscoveryCard[]> {
   const url = new URL("/api/v1/feed", window.location.origin);
   if (query) url.searchParams.set("q", query);
+  if (occasion) url.searchParams.set("occasion", occasion);
   for (const venueType of venueTypesForFilters(filtersForRequest)) {
     url.searchParams.append("venueType", venueType);
   }
@@ -237,6 +303,7 @@ export function DiscoveryDemo() {
   );
   const [tasteSignals, setTasteSignals] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("");
+  const [occasion, setOccasion] = useState<MealOccasion>();
   const [interpretedChips, setInterpretedChips] = useState<
     Array<{ key: string; label: string }>
   >([]);
@@ -251,12 +318,16 @@ export function DiscoveryDemo() {
   const [account, setAccount] = useState<AccountSummary | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
-  const [allergens, setAllergens] = useState<string[]>(["peanut"]);
+  const [allergens, setAllergens] = useState<string[]>([]);
   const [dietaryRestrictions, setDietaryRestrictions] = useState<string[]>([]);
   const [showUnknownAllergyMatches, setShowUnknownAllergyMatches] =
     useState(true);
+  const [allergenStrictness, setAllergenStrictness] = useState<
+    "dish-aware" | "strict"
+  >("dish-aware");
   const [signals, setSignals] = useState(0);
   const profileVersion = useRef(0);
+  const accountPrompted = useRef(false);
   const [syncState, setSyncState] = useState<SyncState>("loading");
   const [locationState, setLocationState] = useState<LocationState>("idle");
   const [coordinates, setCoordinates] = useState<Coordinates | undefined>();
@@ -289,12 +360,14 @@ export function DiscoveryDemo() {
       query: string | undefined,
       filtersForRequest: string[],
       coordinateOverride?: Coordinates,
+      occasionOverride?: MealOccasion,
     ) => {
       try {
         const cards = await fetchFeedCards(
           query,
           filtersForRequest,
           coordinateOverride ?? coordinates,
+          occasionOverride ?? occasion,
         );
         setQueue(cards);
         return cards;
@@ -304,7 +377,7 @@ export function DiscoveryDemo() {
         return undefined;
       }
     },
-    [coordinates],
+    [coordinates, occasion],
   );
 
   function useMyLocation() {
@@ -343,6 +416,23 @@ export function DiscoveryDemo() {
     );
   }
 
+  function chooseOccasion(nextOccasion: MealOccasion) {
+    setOccasion(nextOccasion);
+    setStatus(`Personalizing this set for ${nextOccasion.replace("-", " ")}.`);
+    void requestFeed(
+      undefined,
+      activeFilters,
+      coordinates,
+      nextOccasion,
+    ).then((cards) => {
+      if (cards && cards.length > 0) {
+        setStatus(
+          `${cards.length} local ${cards.length === 1 ? "pick" : "picks"} for ${nextOccasion.replace("-", " ")}.`,
+        );
+      }
+    });
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -368,6 +458,7 @@ export function DiscoveryDemo() {
         setAllergens(profile.allergens);
         setDietaryRestrictions(profile.dietaryRestrictions);
         setShowUnknownAllergyMatches(profile.showUnknownAllergyMatches);
+        setAllergenStrictness(profile.allergenStrictness);
         setQueue((cards) => rankTasteCards(cards, profile.learnedWeights));
         setSyncState("saved");
       })
@@ -417,6 +508,7 @@ export function DiscoveryDemo() {
     setAllergens(profile.allergens);
     setDietaryRestrictions(profile.dietaryRestrictions);
     setShowUnknownAllergyMatches(profile.showUnknownAllergyMatches);
+    setAllergenStrictness(profile.allergenStrictness);
     setQueue((cards) => rankTasteCards(cards, profile.learnedWeights));
   }
 
@@ -442,6 +534,7 @@ export function DiscoveryDemo() {
           allergens,
           dietaryRestrictions,
           showUnknownAllergyMatches,
+          allergenStrictness,
         }),
       });
       if (!response.ok) throw new Error("Settings unavailable");
@@ -487,9 +580,10 @@ export function DiscoveryDemo() {
       setLearnedWeights({});
       setTasteSignals([]);
       setSignals(0);
-      setAllergens(["peanut"]);
+      setAllergens([]);
       setDietaryRestrictions([]);
       setShowUnknownAllergyMatches(true);
+      setAllergenStrictness("dish-aware");
       setQueue(demoCards);
       setStatus("Your saved discovery data has been deleted.");
     } catch {
@@ -512,6 +606,7 @@ export function DiscoveryDemo() {
         dishCardId: card.id,
         eventType,
         reasonCode,
+        occasion,
         preferenceKeys: card.preferenceKeys,
         context: {
           venueType: card.venueType,
@@ -540,6 +635,14 @@ export function DiscoveryDemo() {
       return next;
     });
     setSignals((value) => value + 1);
+    if (
+      signals >= 4 &&
+      !account?.authenticated &&
+      !accountPrompted.current
+    ) {
+      accountPrompted.current = true;
+      openAccount();
+    }
     setDetailOpen(false);
     setPlaceDetails(null);
     setStatus(
@@ -559,6 +662,14 @@ export function DiscoveryDemo() {
     );
     remember(wasSaved ? "unsave" : "save", card);
     setSignals((value) => value + 1);
+    if (
+      !wasSaved &&
+      !account?.authenticated &&
+      !accountPrompted.current
+    ) {
+      accountPrompted.current = true;
+      openAccount();
+    }
     setStatus(
       wasSaved
         ? "Removed from your shortlist."
@@ -655,6 +766,7 @@ export function DiscoveryDemo() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         message: trimmed,
+        occasion,
         latitude: coordinates?.latitude,
         longitude: coordinates?.longitude,
         radiusMeters: coordinates ? 8_000 : undefined,
@@ -720,6 +832,22 @@ export function DiscoveryDemo() {
             neighborhood finds. Ask when you already have a craving. Every
             choice makes the next one sharper.
           </p>
+
+          <div className="filter-list" aria-label="Choose a meal">
+            <span className="eyebrow">HUNGRY FOR</span>
+            {mealChoices.map((meal) => (
+              <button
+                className={occasion === meal.key ? "selected" : ""}
+                key={meal.key}
+                onClick={() => chooseOccasion(meal.key)}
+                type="button"
+                aria-pressed={occasion === meal.key}
+              >
+                {occasion === meal.key ? "✓ " : "+ "}
+                {meal.label}
+              </button>
+            ))}
+          </div>
 
           <form className="prompt-box" onSubmit={submitPrompt}>
             <label htmlFor="food-prompt">What sounds good?</label>
@@ -1091,6 +1219,24 @@ export function DiscoveryDemo() {
             </span>
           </label>
 
+          <label className="unknown-toggle">
+            <input
+              type="checkbox"
+              checked={allergenStrictness === "strict"}
+              onChange={(event) =>
+                setAllergenStrictness(
+                  event.target.checked ? "strict" : "dish-aware",
+                )
+              }
+            />
+            <span>
+              <strong>Strict whole-place allergy screening</strong>
+              Hide a restaurant when shared-kitchen or cross-contact evidence
+              is unknown. Leave this off to evaluate each dish separately and
+              keep the restaurant visible with a warning.
+            </span>
+          </label>
+
           <button
             className="settings-save"
             type="button"
@@ -1120,8 +1266,10 @@ export function DiscoveryDemo() {
           <p className="eyebrow">ACCOUNT / PRIVACY</p>
           <h2 id="account-title">Your discovery data.</h2>
           <p className="settings-intro">
-            Discovery works without an account. Sign-in is optional and moves
-            this browser&apos;s taste history and shortlist into your account.
+            Discovery works without an account. This release keeps taste
+            history and the shortlist private to this browser. Account sign-in
+            is temporarily disabled until the public Worker has a verified
+            authentication gateway.
           </p>
 
           <div className="account-stats">
@@ -1143,11 +1291,9 @@ export function DiscoveryDemo() {
 
           <div className="account-actions">
             {account?.authenticated ? (
-              <a href="/signout-with-chatgpt?return_to=/">Sign out</a>
+              <span>Signed-in session</span>
             ) : (
-              <a href="/signin-with-chatgpt?return_to=/">
-                Sign in with ChatGPT
-              </a>
+              <span>Private guest mode</span>
             )}
             <a href="/api/v1/account/export">Download my data</a>
           </div>
@@ -1357,10 +1503,7 @@ export function DiscoveryDemo() {
         </section>
       )}
 
-      <footer className="prototype-footer">
-        <span>LOCAL DISCOVERY · PERSISTENT TASTE BETA</span>
-        <p>Fictional independent food and beverage data · San Francisco pilot</p>
-      </footer>
+      <SiteFooter />
     </main>
   );
 }

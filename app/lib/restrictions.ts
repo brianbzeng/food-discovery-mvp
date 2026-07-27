@@ -45,6 +45,12 @@ export function normalizeDietaryRestrictions(value: unknown): string[] {
   return normalizeList(value, supportedDietaryRestrictions);
 }
 
+export function normalizeAllergenStrictness(
+  value: unknown,
+): "dish-aware" | "strict" {
+  return value === "strict" ? "strict" : "dish-aware";
+}
+
 export function restrictionLabel(key: string): string {
   return (
     [...allergenOptions, ...dietaryOptions].find(

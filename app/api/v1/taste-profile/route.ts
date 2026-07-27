@@ -4,9 +4,13 @@ import {
   updateTasteSettings,
 } from "../../../../db/taste-store";
 import {
-  normalizeAllergens,
-  normalizeDietaryRestrictions,
-} from "../../../lib/restrictions";
+  MutationRequestError,
+  readSameOriginJson,
+} from "../../../lib/mutation-request";
+import {
+  parseTasteSettings,
+  TasteSettingsValidationError,
+} from "../../../lib/taste-settings";
 import {
   resolveProductIdentity,
   tasteJson,
@@ -37,34 +41,34 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   const identity = await resolveProductIdentity(request);
 
-  let body: Record<string, unknown>;
+  let settings;
   try {
-    const value = (await request.json()) as unknown;
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw new Error("Invalid settings");
-    }
-    body = value as Record<string, unknown>;
-  } catch {
+    settings = parseTasteSettings(await readSameOriginJson(request));
+  } catch (error) {
+    const requestError =
+      error instanceof MutationRequestError ? error : undefined;
+    const validationError =
+      error instanceof TasteSettingsValidationError ? error : undefined;
     return tasteJson(
       {
         error: {
-          code: "invalid-settings",
-          message: "Dietary settings must be a JSON object.",
+          code: requestError?.code ?? "invalid-settings",
+          message:
+            requestError?.message ??
+            validationError?.message ??
+            "Dietary settings are invalid.",
         },
       },
       identity,
-      400,
+      requestError?.status ?? 400,
     );
   }
 
   try {
-    const profile = await updateTasteSettings(identity.principalId, {
-      allergens: normalizeAllergens(body.allergens),
-      dietaryRestrictions: normalizeDietaryRestrictions(
-        body.dietaryRestrictions,
-      ),
-      showUnknownAllergyMatches: body.showUnknownAllergyMatches !== false,
-    });
+    const profile = await updateTasteSettings(
+      identity.principalId,
+      settings,
+    );
     return tasteJson(
       { profile: toPublicTasteProfile(profile) },
       identity,

@@ -1,6 +1,7 @@
 const GUEST_COOKIE = "food_guest_id";
 const SESSION_COOKIE = "food_session_id";
-const AUTHENTICATED_EMAIL_HEADER = "oai-authenticated-user-email";
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type TasteIdentity = {
   principalId: string;
@@ -25,12 +26,8 @@ function parseCookies(request: Request): Map<string, string> {
   return values;
 }
 
-async function sha256(value: string): Promise<string> {
-  const bytes = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+function validOpaqueId(value: string | undefined): string | undefined {
+  return value && UUID_PATTERN.test(value) ? value.toLowerCase() : undefined;
 }
 
 function cookieHeader(
@@ -55,28 +52,22 @@ export async function resolveTasteIdentity(
   request: Request,
 ): Promise<TasteIdentity> {
   const cookies = parseCookies(request);
-  const email = request.headers.get(AUTHENTICATED_EMAIL_HEADER);
   const secure = new URL(request.url).protocol === "https:";
   const setCookies: string[] = [];
 
-  let principalId: string;
-  let mergeFromPrincipalId: string | undefined;
-  if (email) {
-    principalId = `user:${await sha256(email.trim().toLowerCase())}`;
-    const guestId = cookies.get(GUEST_COOKIE);
-    if (guestId) mergeFromPrincipalId = `guest:${guestId}`;
-  } else {
-    let guestId = cookies.get(GUEST_COOKIE);
-    if (!guestId) {
-      guestId = crypto.randomUUID();
-      setCookies.push(
-        cookieHeader(GUEST_COOKIE, guestId, 60 * 60 * 24 * 365, secure),
-      );
-    }
-    principalId = `guest:${guestId}`;
+  // A public Worker must not trust caller-supplied identity headers. Until a
+  // verified auth gateway (for example, a validated Access JWT) is wired in,
+  // every request remains scoped to an opaque first-party guest cookie.
+  let guestId = validOpaqueId(cookies.get(GUEST_COOKIE));
+  if (!guestId) {
+    guestId = crypto.randomUUID();
+    setCookies.push(
+      cookieHeader(GUEST_COOKIE, guestId, 60 * 60 * 24 * 365, secure),
+    );
   }
+  const principalId = `guest:${guestId}`;
 
-  let sessionId = cookies.get(SESSION_COOKIE);
+  let sessionId = validOpaqueId(cookies.get(SESSION_COOKIE));
   if (!sessionId) {
     sessionId = crypto.randomUUID();
     setCookies.push(
@@ -84,26 +75,13 @@ export async function resolveTasteIdentity(
     );
   }
 
-  return { principalId, sessionId, setCookies, mergeFromPrincipalId };
+  return { principalId, sessionId, setCookies };
 }
 
 export async function resolveProductIdentity(
   request: Request,
 ): Promise<TasteIdentity> {
-  const identity = await resolveTasteIdentity(request);
-  if (identity.mergeFromPrincipalId) {
-    const { mergeGuestIntoUser } = await import("../../db/account-store");
-    const merged = await mergeGuestIntoUser(
-      identity.principalId,
-      identity.mergeFromPrincipalId,
-    );
-    if (merged) {
-      const secure = new URL(request.url).protocol === "https:";
-      identity.setCookies.push(cookieHeader(GUEST_COOKIE, "", 0, secure));
-      delete identity.mergeFromPrincipalId;
-    }
-  }
-  return identity;
+  return resolveTasteIdentity(request);
 }
 
 export function tasteJson(
@@ -111,7 +89,11 @@ export function tasteJson(
   identity: TasteIdentity,
   status = 200,
 ): Response {
-  const headers = new Headers({ "content-type": "application/json" });
+  const headers = new Headers({
+    "cache-control": "private, no-store",
+    "content-type": "application/json",
+    vary: "Cookie",
+  });
   for (const cookie of identity.setCookies) {
     headers.append("set-cookie", cookie);
   }

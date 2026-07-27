@@ -13,7 +13,13 @@ type SearchIntent = {
   longitude?: number;
   neighborhood?: string;
   radiusMeters: number;
-  occasion?: "breakfast" | "lunch" | "dinner" | "late-night";
+  occasion?:
+    | "breakfast"
+    | "brunch"
+    | "lunch"
+    | "dinner"
+    | "late-night"
+    | "snack";
   serviceMode?: "dine-in" | "pickup" | "delivery";
   cuisineTags: string[];
   dishTags: string[];
@@ -72,10 +78,15 @@ type RecommendationResult = {
   };
   matchReasons: string[];
   warnings: Array<{
-    code: "allergen-unknown" | "stale-source" | "service-unverified";
+    code:
+      | "allergen-unknown"
+      | "cross-contact"
+      | "stale-source"
+      | "service-unverified";
     message: string;
   }>;
   evidenceIds: string[];
+  exploration: boolean;
 };
 ```
 
@@ -94,11 +105,19 @@ type RecommendationResult = {
 - `GET /api/v1/account`
 - `GET /api/v1/account/export`
 - `DELETE /api/v1/account`
+- `GET /api/v1/parties`
+- `POST /api/v1/parties`
+- `GET /api/v1/parties/{partyId}`
+- `POST /api/v1/parties/{partyId}/invitations`
+- `DELETE /api/v1/parties/{partyId}/invitations/{memberId}`
+- `POST /api/v1/party-invitations/respond`
+- `GET /api/v1/parties/{partyId}/recommendations`
 
-All write endpoints accept an authenticated user id or an anonymous guest id.
-Anonymous identity is stored in an HTTP-only first-party cookie; interaction and
-taste data live in D1 rather than browser storage. Guest interactions will be
-merged after sign-in.
+All public requests currently use an opaque anonymous guest id stored in an
+HTTP-only first-party cookie; interaction and taste data live in D1 rather than
+browser storage. Caller-supplied identity and email headers are ignored.
+Authenticated account identity and guest-to-account merging are dormant until
+a cryptographically verified authentication gateway is implemented.
 
 `GET /api/v1/feed` accepts repeatable `venueType`, `priceTier`, `allergen`, and
 `dietaryRestriction` query parameters plus `q`, coordinates, radius, and limit.
@@ -112,9 +131,10 @@ boundary, not only a ranking preference. If no place survives either boundary,
 the API returns an empty set instead of silently widening the search.
 
 `PUT /api/v1/taste-profile` accepts supported allergen keys, dietary restriction
-keys, and `showUnknownAllergyMatches`. Unsupported keys are discarded. The
-setting is authoritative for both feed and search; clients cannot override a
-known conflict.
+keys, explicit preference weights, `showUnknownAllergyMatches`, and
+`allergenStrictness`. Unsupported keys are discarded. The setting is
+authoritative for feed, search, assistant, and party recommendations; clients
+cannot override a known conflict.
 
 `GET /api/v1/saves` returns the current principal's eligible shortlist.
 `PUT` and `DELETE /api/v1/saves/{restaurantId}` are idempotent. Saving never
@@ -133,18 +153,38 @@ allergen or manufacture restaurant claims.
 
 ## Identity and privacy
 
-Anonymous discovery uses opaque HTTP-only cookies. Authenticated identities are
-derived from a one-way hash of the forwarded account email; raw email is not
-stored in product tables. On first authenticated access, guest taste weights,
-restrictions, saves, and interaction history merge into the user principal and
-the guest profile is removed.
+Anonymous discovery uses validated opaque HTTP-only guest and session cookies.
+Malformed cookies rotate. Browser-controlled forwarded email or identity
+headers are never trusted. Public sign-in must remain disabled until the
+application validates a signed identity assertion—such as a correctly
+validated Cloudflare Access JWT—at the Worker boundary.
 
-- `GET /api/v1/account` returns non-identifying counts and identity state.
-- `GET /api/v1/account/export` downloads the current principal's product data.
-- `DELETE /api/v1/account` permanently removes its profile, shortlist, and
-  interaction events and expires guest cookies.
+- `GET /api/v1/account` returns non-identifying counts and guest identity state.
+- `GET /api/v1/account/export` downloads the current principal's profile,
+  saves, interactions, and own party ownership/membership records without
+  invitation token hashes.
+- `DELETE /api/v1/account` permanently removes its profile, shortlist,
+  interactions, owned parties, and memberships and expires guest cookies.
 
 Discovery and read-only place access remain available without sign-in.
+
+## Party planning
+
+Only accepted party members constrain results. The server loads each accepted
+member's current D1 profile, screens every published sibling dish, and then
+balances the surviving results using least-misery by default or min-average
+when explicitly configured. A conflicting item does not hide a restaurant if a
+different dish satisfies that member's hard constraints.
+
+Unknown dietary evidence remains fail-closed. Allergen uncertainty and
+cross-contact follow each member's saved policy. A party result exposes group
+aggregates and only the caller's own selected-dish outcome; it never exposes
+another member's profile, hard constraints, eligible dishes, warnings, or
+individual satisfaction score.
+
+Invitation tokens contain 256 bits of randomness, expire after seven days, are
+returned in plaintext once for manual sharing, and are stored only as SHA-256
+hashes. Acceptance, decline, or revocation clears the stored hash.
 
 ## Catalog intake
 
@@ -166,9 +206,14 @@ unexpired assets attached to a published dish.
 
 ## Safety invariants
 
-- A known allergen conflict is excluded before ranking.
+- A known dish-level conflict excludes that dish before ranking, not unrelated
+  sibling dishes at the restaurant.
+- A known venue-wide conflict excludes every dish at that restaurant.
+- Shared-kitchen evidence warns in dish-aware mode and excludes in strict mode.
 - Unknown allergen information is never represented as safe.
-- Unknown matches may appear only with persistent warnings.
+- Unknown allergen matches may appear only when allowed by saved policy and
+  always carry persistent warnings.
+- Unknown dietary evidence remains excluded.
 - The assistant may not relax an allergen without explicit user action.
 - Every dietary or allergy statement includes evidence provenance and freshness.
 - A restaurant-supplied claim still prompts people with severe allergies to
@@ -186,4 +231,6 @@ unexpired assets attached to a published dish.
 - Never show: permanent restaurant exclusion
 
 Negative signals decay and are segmented by meal occasion. Fifteen percent of
-feed positions are reserved for controlled exploration.
+feed selection is deterministically eligible for controlled exploration using
+the current session seed. Permanent hiding targets the exact restaurant and
+does not suppress unrelated restaurants that share cuisine tags.

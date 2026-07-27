@@ -1,24 +1,32 @@
 import {
   interactionWeights,
-  normalizePreferenceKey,
+  normalizeMealOccasion,
   type TasteEventType,
 } from "../../../lib/taste-learning";
+import { preferenceKeysForCandidate } from "../../../lib/recommendations";
 import {
   resolveProductIdentity,
   tasteJson,
 } from "../../../lib/taste-identity";
-import { demoCards } from "../../../lib/demo-data";
+import {
+  MutationRequestError,
+  readSameOriginJson,
+} from "../../../lib/mutation-request";
 import {
   recordTasteInteraction,
   toPublicTasteProfile,
 } from "../../../../db/taste-store";
+import {
+  getEligibleCatalogCandidate,
+  type CatalogCandidate,
+} from "../../../../db/catalog-store";
 
 type InteractionBody = {
   restaurantId?: unknown;
   dishCardId?: unknown;
   eventType?: unknown;
   reasonCode?: unknown;
-  preferenceKeys?: unknown;
+  occasion?: unknown;
   context?: unknown;
 };
 
@@ -32,21 +40,6 @@ function isTasteEventType(value: unknown): value is TasteEventType {
   return (
     typeof value === "string" &&
     Object.prototype.hasOwnProperty.call(interactionWeights, value)
-  );
-}
-
-function cleanPreferenceKeys(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-
-  return Array.from(
-    new Set(
-      value
-        .slice(0, 12)
-        .map((item) =>
-          typeof item === "string" ? normalizePreferenceKey(item) : null,
-        )
-        .filter((item): item is string => item !== null),
-    ),
   );
 }
 
@@ -93,23 +86,26 @@ export async function POST(request: Request) {
 
   let body: InteractionBody;
   try {
-    body = (await request.json()) as InteractionBody;
-  } catch {
+    body = (await readSameOriginJson(request)) as InteractionBody;
+  } catch (error) {
+    const requestError =
+      error instanceof MutationRequestError ? error : undefined;
     return tasteJson(
       {
         error: {
-          code: "invalid-json",
-          message: "The interaction payload must be valid JSON.",
+          code: requestError?.code ?? "invalid-json",
+          message:
+            requestError?.message ??
+            "The interaction payload must be valid JSON.",
         },
       },
       identity,
-      400,
+      requestError?.status ?? 400,
     );
   }
 
   const restaurantId = cleanString(body.restaurantId, 100);
   const dishCardId = cleanString(body.dishCardId, 100);
-  const preferenceKeys = cleanPreferenceKeys(body.preferenceKeys);
 
   if (!restaurantId || !dishCardId || !isTasteEventType(body.eventType)) {
     return tasteJson(
@@ -124,11 +120,22 @@ export async function POST(request: Request) {
     );
   }
 
-  const knownCard = demoCards.find(
-    (card) =>
-      card.id === dishCardId && card.restaurantId === restaurantId,
-  );
-  if (!knownCard) {
+  let candidate: CatalogCandidate | null;
+  try {
+    candidate = await getEligibleCatalogCandidate(restaurantId, dishCardId);
+  } catch {
+    return tasteJson(
+      {
+        error: {
+          code: "catalog-storage-unavailable",
+          message: "The eligible catalog could not be checked yet.",
+        },
+      },
+      identity,
+      503,
+    );
+  }
+  if (!candidate) {
     return tasteJson(
       {
         error: {
@@ -142,6 +149,8 @@ export async function POST(request: Request) {
   }
 
   try {
+    const preferenceKeys = preferenceKeysForCandidate(candidate);
+    const occasion = normalizeMealOccasion(body.occasion);
     const profile = await recordTasteInteraction({
       principalId: identity.principalId,
       sessionId: identity.sessionId,
@@ -150,7 +159,13 @@ export async function POST(request: Request) {
       eventType: body.eventType,
       reasonCode: cleanString(body.reasonCode, 80),
       preferenceKeys,
-      context: cleanContext(body.context),
+      occasion,
+      context: {
+        ...cleanContext(body.context),
+        venueType: candidate.venueType,
+        ownershipType: candidate.ownershipType,
+        neighborhood: candidate.neighborhood,
+      },
     });
 
     return tasteJson(

@@ -1,12 +1,13 @@
-import type { VenueType } from "../app/lib/discovery-policy";
+import type { VenueType } from "../app/lib/discovery-policy.ts";
 import {
   hoursAreOpen,
   localDayAndTime,
   type OpeningHoursRecord,
-} from "../app/lib/opening-hours";
-import { getD1 } from "./index";
+} from "../app/lib/opening-hours.ts";
 
 export type CatalogFilters = {
+  restaurantId?: string;
+  dishCardId?: string;
   query?: string;
   venueTypes?: VenueType[];
   priceTiers?: number[];
@@ -18,8 +19,10 @@ export type CatalogFilters = {
 
 export type RestrictionEvidenceRecord = {
   id: string;
+  dishCardId?: string;
   restrictionKey: string;
   status: "contains" | "compatible" | "accommodates" | "unknown";
+  evidenceScope: "dish" | "shared_kitchen" | "venue";
   sourceType: "merchant" | "official_menu" | "team_review" | "unknown";
   sourceUrl?: string;
   merchantConfirmed: boolean;
@@ -78,12 +81,18 @@ type CatalogRow = {
   verified_at: number | null;
 };
 
+type RestaurantIdRow = {
+  restaurant_id: string;
+  timezone: string | null;
+};
+
 type EvidenceRow = {
   id: string;
   restaurant_id: string;
   dish_card_id: string | null;
   restriction_key: string;
   status: RestrictionEvidenceRecord["status"];
+  evidence_scope: RestrictionEvidenceRecord["evidenceScope"];
   source_type: RestrictionEvidenceRecord["sourceType"];
   source_url: string | null;
   merchant_confirmed: number;
@@ -124,14 +133,29 @@ function sourceRefs(
 
 export async function listEligibleCatalog(
   filters: CatalogFilters = {},
+  database?: Cloudflare.Env["DB"],
 ): Promise<CatalogCandidate[]> {
-  const db = await getD1();
+  let db = database;
+  if (!db) {
+    const { getD1 } = await import("./index.ts");
+    db = await getD1();
+  }
   const conditions = [
     "r.discovery_status = 'eligible'",
     "r.ownership_type IN ('independent', 'local_group')",
     "d.is_published = 1",
   ];
   const values: Array<string | number> = [];
+
+  if (filters.restaurantId) {
+    conditions.push("r.id = ?");
+    values.push(filters.restaurantId);
+  }
+
+  if (filters.dishCardId) {
+    conditions.push("d.id = ?");
+    values.push(filters.dishCardId);
+  }
 
   const query = filters.query?.trim().toLowerCase().slice(0, 100);
   if (query) {
@@ -202,46 +226,25 @@ export async function listEligibleCatalog(
   const limit = Math.max(1, Math.min(50, filters.limit ?? 24));
   values.push(filters.openNow ? Math.min(150, limit * 3) : limit);
 
-  const result = await db
+  const restaurantResult = await db
     .prepare(
       `SELECT
         r.id AS restaurant_id,
-        d.id AS dish_card_id,
-        r.name AS restaurant_name,
-        r.venue_type,
-        r.ownership_type,
-        r.neighborhood,
-        r.latitude,
-        r.longitude,
-        r.cuisine_tags,
-        d.dish_tags,
-        d.title,
-        d.description,
-        r.price_tier,
-        d.price_display,
-        r.phone,
-        r.website_url,
-        r.menu_url,
-        r.directions_url,
-        r.service_modes,
-        r.source_refs,
-        r.timezone,
-        r.verified_at
+        r.timezone
        FROM restaurants r
        INNER JOIN dish_cards d ON d.restaurant_id = r.id
        WHERE ${conditions.join(" AND ")}
-       ORDER BY COALESCE(r.verified_at, 0) DESC, d.updated_at DESC
+       GROUP BY r.id
+       ORDER BY COALESCE(MAX(r.verified_at), 0) DESC, r.id
        LIMIT ?`,
     )
     .bind(...values)
-    .all<CatalogRow>();
+    .all<RestaurantIdRow>();
 
-  let rows = (result.results ?? []) as CatalogRow[];
-  if (rows.length === 0) return [];
-
-  let restaurantIds = Array.from(
-    new Set(rows.map((row: CatalogRow) => row.restaurant_id)),
-  );
+  let restaurantRows =
+    (restaurantResult.results ?? []) as RestaurantIdRow[];
+  if (restaurantRows.length === 0) return [];
+  let restaurantIds = restaurantRows.map((row) => row.restaurant_id);
   if (filters.openNow) {
     const hoursResult = await db
       .prepare(
@@ -257,7 +260,7 @@ export async function listEligibleCatalog(
       current.push(hours);
       hoursByRestaurant.set(hours.restaurant_id, current);
     }
-    rows = rows
+    restaurantRows = restaurantRows
       .filter((row) => {
         const local = localDayAndTime(row.timezone ?? "UTC");
         return (hoursByRestaurant.get(row.restaurant_id) ?? []).some((hours) =>
@@ -265,13 +268,46 @@ export async function listEligibleCatalog(
         );
       })
       .slice(0, limit);
-    restaurantIds = Array.from(
-      new Set(rows.map((row) => row.restaurant_id)),
-    );
-    if (rows.length === 0) return [];
+    restaurantIds = restaurantRows.map((row) => row.restaurant_id);
+    if (restaurantIds.length === 0) return [];
   }
 
-  const evidenceResult = await db
+  const placeholders = restaurantIds.map(() => "?").join(",");
+  const [catalogResult, evidenceResult] = await Promise.all([
+    db
+      .prepare(
+        `SELECT
+          r.id AS restaurant_id,
+          d.id AS dish_card_id,
+          r.name AS restaurant_name,
+          r.venue_type,
+          r.ownership_type,
+          r.neighborhood,
+          r.latitude,
+          r.longitude,
+          r.cuisine_tags,
+          d.dish_tags,
+          d.title,
+          d.description,
+          r.price_tier,
+          d.price_display,
+          r.phone,
+          r.website_url,
+          r.menu_url,
+          r.directions_url,
+          r.service_modes,
+          r.source_refs,
+          r.timezone,
+          r.verified_at
+         FROM restaurants r
+         INNER JOIN dish_cards d ON d.restaurant_id = r.id
+         WHERE r.id IN (${placeholders})
+           AND d.is_published = 1
+         ORDER BY COALESCE(r.verified_at, 0) DESC, r.id, d.updated_at DESC, d.id`,
+      )
+      .bind(...restaurantIds)
+      .all<CatalogRow>(),
+    db
     .prepare(
       `SELECT
         id,
@@ -279,24 +315,29 @@ export async function listEligibleCatalog(
         dish_card_id,
         restriction_key,
         status,
+        evidence_scope,
         source_type,
         source_url,
         merchant_confirmed,
         verified_at,
         notes
        FROM restriction_evidence
-       WHERE restaurant_id IN (${restaurantIds.map(() => "?").join(",")})`,
+       WHERE restaurant_id IN (${placeholders})`,
     )
     .bind(...restaurantIds)
-    .all<EvidenceRow>();
+    .all<EvidenceRow>(),
+  ]);
+  const rows = (catalogResult.results ?? []) as CatalogRow[];
 
   const evidenceByRestaurant = new Map<string, RestrictionEvidenceRecord[]>();
   for (const item of evidenceResult.results ?? []) {
     const current = evidenceByRestaurant.get(item.restaurant_id) ?? [];
     current.push({
       id: item.id,
+      dishCardId: item.dish_card_id ?? undefined,
       restrictionKey: item.restriction_key,
       status: item.status,
+      evidenceScope: item.evidence_scope,
       sourceType: item.source_type,
       sourceUrl: item.source_url ?? undefined,
       merchantConfirmed: Boolean(item.merchant_confirmed),
@@ -329,6 +370,27 @@ export async function listEligibleCatalog(
     sourceRefs: sourceRefs(row.source_refs),
     timezone: row.timezone ?? undefined,
     verifiedAt: row.verified_at ?? undefined,
-    evidence: evidenceByRestaurant.get(row.restaurant_id) ?? [],
+    evidence: (evidenceByRestaurant.get(row.restaurant_id) ?? []).filter(
+      (evidence) =>
+        !evidence.dishCardId || evidence.dishCardId === row.dish_card_id,
+    ),
   }));
+}
+
+export async function getEligibleCatalogCandidate(
+  restaurantId: string,
+  dishCardId: string,
+): Promise<CatalogCandidate | null> {
+  const candidates = await listEligibleCatalog({
+    restaurantId,
+    dishCardId,
+    limit: 1,
+  });
+  return (
+    candidates.find(
+      (candidate) =>
+        candidate.restaurantId === restaurantId &&
+        candidate.dishCardId === dishCardId,
+    ) ?? null
+  );
 }

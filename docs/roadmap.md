@@ -47,12 +47,14 @@ and tests are all present.
 - Recommendation explanations grounded only in catalog evidence
 - No assistant ability to relax allergy constraints
 
-## 7. Identity and privacy — complete
+## 7. Guest identity and privacy controls — complete; verified auth pending
 
-- Optional sign-in without blocking anonymous discovery
-- Guest-profile merge after sign-in
-- Account data export and deletion
+- Opaque, validated first-party guest and session cookies
+- Caller-supplied identity/email headers ignored
+- Account data export and deletion, including party ownership/membership
 - Server-side ownership checks on every private write
+- Verified account sign-in, cross-device continuity, recovery, and safe
+  guest-to-account party merge remain future work
 
 ## 8. Catalog operations and media — complete
 
@@ -61,11 +63,13 @@ and tests are all present.
 - Media-rights metadata and R2-backed approved assets
 - Rejection paths for chains, franchises, stale records, and unlicensed media
 
-## 9. Web MVP release — validated; private hosting connection required
+## 9. Web MVP release — deployed
 
 - Responsive accessibility and interaction audit
-- Production build, migrations, automated tests, and private deployment
-- Repository synchronized with the validated release
+- Common About, Privacy, Terms, and custom 404 pages
+- Production build, D1 migrations, 60 automated tests, and Cloudflare Worker
+  deployment at `https://food.brianbzeng.com`
+- Review branch and detailed engineering handoff prepared for continuation
 
 ## 10. Swift/TestFlight foundation — complete
 
@@ -73,3 +77,25 @@ and tests are all present.
 - Codable API models and service layer
 - Feed, search, saved places, settings, and detail screens
 - TestFlight preparation and release checklist
+
+## 11. Core recommendation model — complete
+
+- No invented allergen default
+- Dish-level, shared-kitchen, and venue-wide safety evidence
+- Dish-aware warnings plus user-controlled strict whole-place exclusion
+- Server-derived interaction features
+- Six meal occasions, stable positive learning, decaying negative signals,
+  exact permanent hiding, and deterministic controlled exploration
+- Synthetic-profile evaluation and Miniflare-backed D1 migration coverage
+- Expanded fictional pilot catalog with 14 published dishes across 7 venues
+
+## 12. Party and grounded-assistant foundations — complete; UI/LLM pending
+
+- Creator-scoped, hashed, expiring, single-use party invitations
+- Accepted-member-only recommendation constraints
+- Least-misery and min-average fairness with group aggregates and caller-only
+  outcome privacy
+- Fail-closed retrieval/profile contracts with evidence IDs and post-output
+  validation
+- Party screens, invite delivery, verified account identity, vector retrieval,
+  and a production LLM call remain future work

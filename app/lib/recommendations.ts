@@ -3,7 +3,12 @@ import type {
   RestrictionEvidenceRecord,
 } from "../../db/catalog-store";
 import type { TasteProfile } from "../../db/taste-store";
-import { normalizePreferenceKey } from "./taste-learning.ts";
+import {
+  combinedTasteWeight,
+  normalizeMealOccasion,
+  normalizePreferenceKey,
+  type MealOccasion,
+} from "./taste-learning.ts";
 
 export type RecommendationIntent = {
   query?: string;
@@ -14,12 +19,19 @@ export type RecommendationIntent = {
   priceTiers?: number[];
   allergens?: string[];
   dietaryRestrictions?: string[];
+  occasion?: MealOccasion;
   serviceMode?: "dine-in" | "pickup" | "delivery";
   openNow?: boolean;
+  explorationSeed?: string;
+  explorationRate?: number;
 };
 
 export type RecommendationWarning = {
-  code: "allergen-unknown" | "stale-source" | "service-unverified";
+  code:
+    | "allergen-unknown"
+    | "cross-contact"
+    | "stale-source"
+    | "service-unverified";
   message: string;
 };
 
@@ -38,6 +50,7 @@ export type RecommendationResult = {
   matchReasons: string[];
   warnings: RecommendationWarning[];
   evidenceIds: string[];
+  exploration: boolean;
   place: CatalogCandidate;
 };
 
@@ -71,7 +84,9 @@ export function distanceMeters(
   return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function preferenceKeys(candidate: CatalogCandidate): string[] {
+export function preferenceKeysForCandidate(
+  candidate: CatalogCandidate,
+): string[] {
   return [
     `venue:${candidate.venueType}`,
     `locality:${candidate.ownershipType}`,
@@ -86,9 +101,9 @@ function preferenceKeys(candidate: CatalogCandidate): string[] {
 function evidenceFor(
   evidence: RestrictionEvidenceRecord[],
   restriction: string,
-): RestrictionEvidenceRecord | undefined {
+): RestrictionEvidenceRecord[] {
   const key = restriction.trim().toLowerCase();
-  return evidence.find(
+  return evidence.filter(
     (item) => item.restrictionKey.trim().toLowerCase() === key,
   );
 }
@@ -96,7 +111,9 @@ function evidenceFor(
 function safetyDecision(
   candidate: CatalogCandidate,
   restrictions: string[],
+  allergenKeys: Set<string>,
   showUnknownMatches: boolean,
+  allergenStrictness: TasteProfile["allergenStrictness"],
 ): {
   allowed: boolean;
   evidenceIds: string[];
@@ -107,13 +124,61 @@ function safetyDecision(
 
   for (const restriction of restrictions) {
     const evidence = evidenceFor(candidate.evidence, restriction);
-    if (evidence?.id) evidenceIds.push(evidence.id);
-    if (evidence?.status === "contains") {
+    evidenceIds.push(...evidence.map((item) => item.id));
+    const isAllergen = allergenKeys.has(restriction);
+    const explicitConflict = evidence.some(
+      (item) =>
+        item.status === "contains" &&
+        (item.evidenceScope ?? "dish") !== "shared_kitchen",
+    );
+    if (explicitConflict) {
       return { allowed: false, evidenceIds, warnings };
     }
 
-    if (!evidence || evidence.status === "unknown") {
-      if (!showUnknownMatches) {
+    const sharedKitchenRisk =
+      isAllergen &&
+      evidence.some(
+        (item) =>
+          (item.evidenceScope ?? "dish") === "shared_kitchen" &&
+          (item.status === "contains" || item.status === "unknown"),
+      );
+    if (sharedKitchenRisk) {
+      if (allergenStrictness === "strict") {
+        return { allowed: false, evidenceIds, warnings };
+      }
+      warnings.push({
+        code: "cross-contact",
+        message: `${restriction} cross-contact controls are unverified; confirm directly with the business.`,
+      });
+    }
+
+    const venueWideUncertainty =
+      isAllergen &&
+      evidence.some(
+        (item) =>
+          (item.evidenceScope ?? "dish") === "venue" &&
+          item.status === "unknown",
+      );
+    if (venueWideUncertainty) {
+      if (allergenStrictness === "strict") {
+        return { allowed: false, evidenceIds, warnings };
+      }
+      warnings.push({
+        code: "allergen-unknown",
+        message: `${restriction} venue-wide controls are unverified; confirm directly with the business.`,
+      });
+    }
+
+    const hasCompatibleEvidence = evidence.some(
+      (item) =>
+        item.status === "compatible" || item.status === "accommodates",
+    );
+    if (!hasCompatibleEvidence) {
+      if (
+        !isAllergen ||
+        !showUnknownMatches ||
+        (isAllergen && allergenStrictness === "strict")
+      ) {
         return { allowed: false, evidenceIds, warnings };
       }
       warnings.push({
@@ -131,8 +196,6 @@ function contextScore(
   intent: RecommendationIntent,
 ): number {
   const query = intent.query?.trim().toLowerCase();
-  if (!query) return 0.68;
-
   const text = [
     candidate.restaurantName,
     candidate.title,
@@ -144,25 +207,54 @@ function contextScore(
   ]
     .join(" ")
     .toLowerCase();
-  const terms = query.split(/\s+/).filter((term) => term.length > 2);
-  if (terms.length === 0) return 0.68;
+  const terms = query?.split(/\s+/).filter((term) => term.length > 2) ?? [];
+  const queryScore =
+    terms.length === 0
+      ? 0.68
+      : clamp(
+          terms.filter((term) => text.includes(term)).length / terms.length,
+          0.15,
+          1,
+        );
+  const occasion = normalizeMealOccasion(intent.occasion);
+  if (!occasion) return queryScore;
 
-  return clamp(
-    terms.filter((term) => text.includes(term)).length / terms.length,
-    0.15,
-    1,
+  const occasionTerms: Record<MealOccasion, string[]> = {
+    breakfast: ["breakfast", "morning", "coffee", "pastry", "cafe", "bakery"],
+    brunch: ["brunch", "breakfast", "coffee", "pastry", "cafe", "bakery"],
+    lunch: ["lunch", "quick", "sandwich", "bowl", "noodles"],
+    dinner: ["dinner", "shareable", "entree", "noodles", "pizza"],
+    "late-night": ["late-night", "late night", "midnight", "snack"],
+    snack: ["snack", "dessert", "pastry", "boba", "coffee"],
+  };
+  const matchesOccasion = occasionTerms[occasion].some((term) =>
+    text.includes(term),
   );
+  return clamp(queryScore + (matchesOccasion ? 0.2 : -0.05));
 }
 
 function tasteScore(
   candidate: CatalogCandidate,
   profile: TasteProfile,
+  intent: RecommendationIntent,
 ): number {
-  const keys = preferenceKeys(candidate);
+  const keys = preferenceKeysForCandidate(candidate);
   if (keys.length === 0) return 0.5;
+  const occasion = normalizeMealOccasion(intent.occasion);
+  const occasionWeights = occasion
+    ? profile.occasionWeights?.[occasion] ?? {}
+    : {};
   const average =
     keys.reduce(
-      (sum, key) => sum + (profile.learnedWeights[key] ?? 0) / 12,
+      (sum, key) =>
+        sum +
+        combinedTasteWeight(
+          key,
+          profile.learnedWeights,
+          profile.explicitPreferences,
+          occasionWeights,
+        ) /
+          12,
       0,
     ) / keys.length;
   return clamp(0.5 + average * 0.5);
@@ -225,11 +317,111 @@ function dataQuality(
   return { score: clamp(score), warnings };
 }
 
+function noveltyScore(
+  candidate: CatalogCandidate,
+  profile: TasteProfile,
+  intent: RecommendationIntent,
+): number {
+  const occasion = normalizeMealOccasion(intent.occasion);
+  const occasionWeights = occasion
+    ? profile.occasionWeights?.[occasion] ?? {}
+    : {};
+  const keys = preferenceKeysForCandidate(candidate);
+  if (keys.length === 0) return 0.75;
+  const familiarity =
+    keys.reduce(
+      (sum, key) =>
+        sum +
+        Math.max(
+          0,
+          combinedTasteWeight(
+            key,
+            profile.learnedWeights,
+            profile.explicitPreferences,
+            occasionWeights,
+          ),
+        ) /
+          12,
+      0,
+    ) / keys.length;
+  return clamp(0.9 - familiarity * 0.4, 0.5, 0.9);
+}
+
+function stableHash(value: string): number {
+  let hash = 2_166_136_261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return hash >>> 0;
+}
+
+function applyControlledExploration(
+  ranked: RecommendationResult[],
+  profile: TasteProfile,
+  intent: RecommendationIntent,
+): RecommendationResult[] {
+  const explicitRate =
+    typeof intent.explorationRate === "number" &&
+    Number.isFinite(intent.explorationRate)
+      ? clamp(intent.explorationRate)
+      : undefined;
+  const rate = explicitRate ?? 0.15;
+  if (
+    ranked.length < 2 ||
+    rate <= 0 ||
+    (!intent.explorationSeed && profile.totalSignals <= 0)
+  ) {
+    return ranked;
+  }
+
+  const count = Math.min(ranked.length, Math.max(1, Math.round(ranked.length * rate)));
+  const seed =
+    intent.explorationSeed ??
+    [
+      profile.principalId,
+      intent.occasion ?? "",
+      intent.query ?? "",
+    ].join(":");
+  const bySeed = (left: RecommendationResult, right: RecommendationResult) =>
+    stableHash(`${seed}:${left.dishCardId}`) -
+      stableHash(`${seed}:${right.dishCardId}`) ||
+    left.dishCardId.localeCompare(right.dishCardId);
+
+  if (count >= ranked.length) {
+    return [...ranked]
+      .sort(bySeed)
+      .map((result) => ({ ...result, exploration: true }));
+  }
+
+  const protectedCount = Math.min(3, Math.max(1, ranked.length - count));
+  const selected = [...ranked.slice(protectedCount)].sort(bySeed).slice(0, count);
+  const selectedIds = new Set(selected.map((result) => result.dishCardId));
+  const result = ranked.filter((item) => !selectedIds.has(item.dishCardId));
+  selected.forEach((item, index) => {
+    const insertionIndex = Math.min(4 + index * 7, result.length);
+    result.splice(insertionIndex, 0, {
+      ...item,
+      exploration: true,
+      matchReasons: [
+        ...item.matchReasons,
+        "A little outside your usual picks",
+      ],
+    });
+  });
+  return result;
+}
+
 export function rankRecommendations(
   candidates: CatalogCandidate[],
   profile: TasteProfile,
   intent: RecommendationIntent,
 ): RecommendationResult[] {
+  const allergenKeys = new Set(
+    [...profile.allergens, ...(intent.allergens ?? [])].map((key) =>
+      key.trim().toLowerCase(),
+    ),
+  );
   const restrictions = Array.from(
     new Set([
       ...profile.allergens,
@@ -237,10 +429,12 @@ export function rankRecommendations(
       ...(intent.allergens ?? []),
       ...(intent.dietaryRestrictions ?? []),
     ]),
-  );
+  ).map((key) => key.trim().toLowerCase());
+  const hiddenRestaurantIds = new Set(profile.hiddenRestaurantIds ?? []);
 
-  return candidates
+  const ranked = candidates
     .flatMap((candidate) => {
+      if (hiddenRestaurantIds.has(candidate.restaurantId)) return [];
       if (
         typeof intent.latitude === "number" &&
         typeof intent.longitude === "number" &&
@@ -257,12 +451,14 @@ export function rankRecommendations(
       const safety = safetyDecision(
         candidate,
         restrictions,
+        allergenKeys,
         profile.showUnknownAllergyMatches,
+        profile.allergenStrictness ?? "dish-aware",
       );
       if (!safety.allowed) return [];
 
       const context = contextScore(candidate, intent);
-      const taste = tasteScore(candidate, profile);
+      const taste = tasteScore(candidate, profile, intent);
       const distance = distanceScore(candidate, intent);
       const price =
         intent.priceTiers && intent.priceTiers.length > 0
@@ -271,7 +467,7 @@ export function rankRecommendations(
             : 0
           : 0.72;
       const quality = dataQuality(candidate);
-      const novelty = 0.75;
+      const novelty = noveltyScore(candidate, profile, intent);
       const score = Math.round(
         100 *
           (context * 0.3 +
@@ -308,6 +504,7 @@ export function rankRecommendations(
           matchReasons,
           warnings: [...safety.warnings, ...quality.warnings],
           evidenceIds: safety.evidenceIds,
+          exploration: false,
           place: candidate,
         },
       ];
@@ -315,6 +512,9 @@ export function rankRecommendations(
     .sort(
       (left, right) =>
         right.score - left.score ||
-        left.restaurantId.localeCompare(right.restaurantId),
+        left.restaurantId.localeCompare(right.restaurantId) ||
+        left.dishCardId.localeCompare(right.dishCardId),
     );
+
+  return applyControlledExploration(ranked, profile, intent);
 }
