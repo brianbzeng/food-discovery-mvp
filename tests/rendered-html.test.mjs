@@ -37,9 +37,13 @@ test("server-renders the product foundation", async () => {
   assert.match(html, /What sounds good\?/);
   assert.match(html, /independent restaurants, cafés, boba shops/i);
   assert.match(html, /Major chains and franchises are removed/i);
-  assert.match(html, /Peanut allergy saved/);
+  assert.match(html, /No dietary filters saved/);
+  assert.doesNotMatch(html, /Peanut allergy saved/);
+  assert.match(html, /HUNGRY FOR/);
+  assert.match(html, /Late night/);
   assert.match(html, /More like this/);
-  assert.match(html, /Fictional independent food and beverage data/);
+  assert.match(html, /Local discovery · MVP/);
+  assert.match(html, /href="\/about"/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 

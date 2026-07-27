@@ -61,6 +61,7 @@ export async function POST(request: Request) {
     : [];
   const normalized = normalizeRecommendationIntent({
     ...parsed,
+    occasion: parsed.occasion ?? body.occasion,
     latitude: body.latitude,
     longitude: body.longitude,
     radiusMeters: body.radiusMeters,
@@ -71,6 +72,7 @@ export async function POST(request: Request) {
       ...(parsed.dietaryRestrictions ?? []),
       ...suppliedDietaryRestrictions,
     ],
+    explorationSeed: identity.sessionId,
   });
 
   try {
@@ -89,7 +91,7 @@ export async function POST(request: Request) {
           ...normalized,
           chips: parsed.chips,
           confidence: parsed.confidence,
-          occasion: parsed.occasion,
+          occasion: normalized.occasion,
           serviceMode: normalized.serviceMode,
           openNow: normalized.openNow,
         },

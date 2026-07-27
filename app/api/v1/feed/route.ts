@@ -28,8 +28,10 @@ export async function GET(request: Request) {
       .filter(Number.isFinite),
     allergens: url.searchParams.getAll("allergen"),
     dietaryRestrictions: url.searchParams.getAll("dietaryRestriction"),
+    occasion: url.searchParams.get("occasion") ?? undefined,
     serviceMode: url.searchParams.get("serviceMode") ?? undefined,
     openNow: url.searchParams.get("openNow") === "true",
+    explorationSeed: identity.sessionId,
   });
   const limit = Math.max(
     1,

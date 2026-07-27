@@ -1,7 +1,7 @@
 import type { RecommendationIntent } from "./recommendations";
 
 export type ParsedIntent = RecommendationIntent & {
-  occasion?: "breakfast" | "lunch" | "dinner" | "late-night";
+  occasion?: RecommendationIntent["occasion"];
   serviceMode?: "dine-in" | "pickup" | "delivery";
   openNow?: boolean;
   confidence: number;
@@ -146,9 +146,16 @@ export function parseDiscoveryIntent(message: string): ParsedIntent {
 
   let occasion: ParsedIntent["occasion"];
   if (includesPhrase(normalized, "breakfast")) occasion = "breakfast";
+  else if (includesPhrase(normalized, "brunch")) occasion = "brunch";
   else if (includesPhrase(normalized, "lunch")) occasion = "lunch";
   else if (includesPhrase(normalized, "late night")) occasion = "late-night";
   else if (includesPhrase(normalized, "dinner")) occasion = "dinner";
+  else if (
+    includesPhrase(normalized, "snack") ||
+    includesPhrase(normalized, "something small")
+  ) {
+    occasion = "snack";
+  }
   if (occasion) {
     pushChip(
       chips,

@@ -29,6 +29,20 @@
       "when": 1785112527292,
       "tag": "0003_powerful_doctor_octopus",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1785128249080,
+      "tag": "0004_nebulous_shard",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1785129411544,
+      "tag": "0005_unusual_apocalypse",
+      "breakpoints": true
     }
   ]
 }

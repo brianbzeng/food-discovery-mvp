@@ -26,7 +26,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const intent = normalizeRecommendationIntent(body);
+  const intent = {
+    ...normalizeRecommendationIntent(body),
+    explorationSeed: identity.sessionId,
+  };
   try {
     return tasteJson(
       await createRecommendationFeed(identity.principalId, intent),

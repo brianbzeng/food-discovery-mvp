@@ -118,6 +118,66 @@ test("hides unknown evidence when the saved safety setting requires it", () => {
   assert.deepEqual(recommendations, []);
 });
 
+test("unknown dietary evidence stays fail-closed when allergen warnings are allowed", () => {
+  const recommendations = rankRecommendations(
+    [candidate()],
+    {
+      ...profile,
+      allergens: [],
+      dietaryRestrictions: ["vegan"],
+      showUnknownAllergyMatches: true,
+    },
+    { query: "boba" },
+  );
+
+  assert.deepEqual(recommendations, []);
+});
+
+test("venue-wide allergen uncertainty warns in dish-aware mode and excludes in strict mode", () => {
+  const place = candidate([
+    {
+      id: "evidence-peanut-dish",
+      dishCardId: "dish-local-tea",
+      restrictionKey: "peanut",
+      status: "compatible",
+      evidenceScope: "dish",
+      sourceType: "official_menu",
+      merchantConfirmed: true,
+    },
+    {
+      id: "evidence-peanut-venue",
+      restrictionKey: "peanut",
+      status: "unknown",
+      evidenceScope: "venue",
+      sourceType: "team_review",
+      merchantConfirmed: false,
+    },
+  ]);
+
+  const [dishAware] = rankRecommendations(
+    [place],
+    { ...profile, allergenStrictness: "dish-aware" },
+    { query: "boba" },
+  );
+  assert.equal(
+    dishAware.warnings.some(
+      (warning) =>
+        warning.code === "allergen-unknown" &&
+        warning.message.includes("venue-wide"),
+    ),
+    true,
+  );
+
+  assert.deepEqual(
+    rankRecommendations(
+      [place],
+      { ...profile, allergenStrictness: "strict" },
+      { query: "boba" },
+    ),
+    [],
+  );
+});
+
 test("treats the requested radius as a hard nearby boundary", () => {
   const recommendations = rankRecommendations(
     [candidate()],
