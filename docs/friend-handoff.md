@@ -16,15 +16,15 @@ that commit.
 | --- | --- |
 | Repository | `https://github.com/brianbzeng/food-discovery-mvp.git` |
 | Release branch | `codex/core-model-foundation` |
-| Final implementation commit SHA | **[FILLED AFTER FIRST PUSH]** |
-| Draft pull request | **[FILLED AFTER FIRST PUSH]** |
+| Final implementation commit SHA | `bae812081f4b5388c9d7e37dec44cdda1401becd` |
+| Draft pull request | [food-discovery-mvp#1](https://github.com/brianbzeng/food-discovery-mvp/pull/1) |
 | Final local validation | July 26 PDT: `npm test` (82/82), `npm run lint`, `npm run typecheck`, `git diff --check`, six-migration fresh-D1 Wrangler smoke, generated-config audit, and Wrangler deploy dry run all passed. Production-dependency audit: 0 vulnerabilities. Swift was not installed on the Windows host, so `swift:build` was not run. |
 | Production D1 pre-change bookmark | `00000009-00000000-000050b5-43d5b896f7eb6df34acfbf3a9ed2ddef` |
 | Production migrations applied | Ledger bootstrapped only after schema verification; `0000`–`0005` are recorded. `0004_nebulous_shard.sql` and `0005_unusual_apocalypse.sql` applied successfully. |
-| Production Worker version/deployment ID | `ff41bf62-0787-480a-9217-09df763a5d78` |
+| Production Worker version/deployment ID | `90f8c890-ba06-4667-aaf0-52a288c811ec` |
 | Production URL | `https://food.brianbzeng.com` |
 | `workers.dev` URL | `https://food-discovery-mvp.bzeng9099.workers.dev` |
-| Production smoke-test result | Passed July 26 PDT: home/About/Privacy/Terms/custom 404, feed, default profile, spoofed-header rejection, one- and two-member party creation/invite/accept/recommend, account export, account deletion, Worker URL, and cleanup. Final party smoke returned 2 accepted members and 3 recommendations across 7 catalog restaurants; no smoke parties remained. |
+| Production smoke-test result | Passed July 26 PDT: home/About/Privacy/Terms/custom 404, custom and Worker URLs, read-only account export, private cache headers, default profile, malformed-setting fail-closed behavior, cross-origin/content-type rejection, spoofed-header rejection, dish-level safe sibling, concurrent save/permanent-hide preservation, two-member party create/invite/accept/recommend, account deletion, and remote cleanup. The final party smoke returned 2 accepted members and 3 recommendations; all four disposable profiles/interactions and all smoke parties/members were absent afterward. |
 | Rollback reference | Previous Worker version `54f568c4-ce05-4f16-b5bf-15d15d76c88f`; pre-change D1 bookmark above. A post-release bookmark was `0000000a-00000028-000050b5-757943f7b1bc5cfce9aeb04f2fb396cb`. |
 
 The first live party recommendation smoke exposed a missing `await` in the
@@ -1427,6 +1427,8 @@ Use a disposable smoke guest:
 
 - create a taste signal and save;
 - download `/api/v1/account/export`;
+- confirm a brand-new export reports `updatedAt: null` and does not create a
+  durable taste-profile row;
 - confirm private/no-store behavior;
 - delete `/api/v1/account`;
 - confirm cookies expire and the next profile is new.
@@ -1622,18 +1624,18 @@ external communication.
 
 ### P0 — preserve release integrity
 
-- [ ] Replace every release-snapshot placeholder.
-- [ ] Ensure the final commit is pushed and the draft PR contains the exact
+- [x] Replace every release-snapshot placeholder.
+- [x] Ensure the final commit is pushed and the draft PR contains the exact
   deployed source.
-- [ ] Confirm the generated Wrangler binding/config duplication fix persists in
+- [x] Confirm the generated Wrangler binding/config duplication fix persists in
   the final clean build.
-- [ ] Verify D1 ledger and migrations `0004`/`0005`.
-- [ ] Run full local validation and production smoke tests.
-- [ ] Confirm spoofed auth headers are ignored in production.
-- [ ] Confirm dish-level safe sibling behavior in production.
-- [ ] Confirm account export/delete behavior for party data.
-- [ ] Update Privacy if party records are exposed.
-- [ ] Keep the pre-change D1 bookmark and previous Worker version in a private
+- [x] Verify D1 ledger and migrations `0004`/`0005`.
+- [x] Run full local validation and production smoke tests.
+- [x] Confirm spoofed auth headers are ignored in production.
+- [x] Confirm dish-level safe sibling behavior in production.
+- [x] Confirm account export/delete behavior for party data.
+- [x] Update Privacy if party records are exposed.
+- [x] Keep the pre-change D1 bookmark and previous Worker version in a private
   operator log.
 
 ### P1 — make guest testing dependable
