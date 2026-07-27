@@ -1316,6 +1316,24 @@ If Cloudflare Git Builds are also connected, verify their branch/build/deploy
 settings so a stale automatic build does not immediately overwrite the manual
 deployment.
 
+**Observed during this release:** the repository connection is currently
+attached to `near-and-dear-food-gateway`, while the repository config names
+`food-discovery-mvp`. Cloudflare therefore warns about the name mismatch and
+overrides the build target to `near-and-dear-food-gateway`. Its deploy command
+is `npx wrangler versions upload`, which creates a version preview but does not
+send it production traffic. A docs-only build for commit `5438cde`
+uploaded gateway preview version
+`84df2f8d-98ba-441f-9842-45e2e57f6bbf`; the active
+`food-discovery-mvp` deployment remained
+`90f8c890-ba06-4667-aaf0-52a288c811ec`.
+
+Before relying on Git deployment, move/recreate the repository connection on
+the actual `food-discovery-mvp` Worker (or explicitly decide that the gateway
+is only a preview target), confirm the Worker-name warning is gone, and decide
+whether builds should merely upload versions or deploy production traffic. Do
+not change the Git deploy command to a production deploy while the target name
+is still mismatched.
+
 Recommended Git Build values:
 
 - Root directory: `/`
