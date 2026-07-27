@@ -36,6 +36,14 @@ yarn-error.log*
 
 # typescript
 next-env.d.ts
+*.tsbuildinfo
+
+# swift
+**/.build/
+**/.swiftpm/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
 /dist/
 /.wrangler/
 /outputs/

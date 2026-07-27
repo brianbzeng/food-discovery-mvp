@@ -1,0 +1,46 @@
+name: FoodDiscovery
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  DiscoveryCore:
+    path: .
+targets:
+  FoodDiscoveryApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: FoodDiscoveryApp
+    dependencies:
+      - package: DiscoveryCore
+        product: DiscoveryCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.fooddiscovery
+        PRODUCT_NAME: FoodDiscovery
+        SWIFT_VERSION: "5.10"
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGN_STYLE: Automatic
+      configs:
+        Debug:
+          FOOD_API_BASE_URL: http://localhost:3000
+        Release:
+          FOOD_API_BASE_URL: https://replace-before-testflight.invalid
+    info:
+      path: FoodDiscoveryApp/Info.plist
+      properties:
+        CFBundleDisplayName: Food Discovery
+        FOOD_API_BASE_URL: $(FOOD_API_BASE_URL)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+  FoodDiscoveryAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/DiscoveryCoreTests
+    dependencies:
+      - target: FoodDiscoveryApp
+      - package: DiscoveryCore
+        product: DiscoveryCore

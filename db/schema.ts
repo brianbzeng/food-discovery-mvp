@@ -13,7 +13,43 @@ export const restaurants = sqliteTable(
     id: text("id").primaryKey(),
     slug: text("slug").notNull(),
     name: text("name").notNull(),
+    venueType: text("venue_type", {
+      enum: [
+        "restaurant",
+        "cafe",
+        "boba",
+        "tea_house",
+        "bakery",
+        "dessert",
+        "juice_bar",
+      ],
+    })
+      .notNull()
+      .default("restaurant"),
+    ownershipType: text("ownership_type", {
+      enum: [
+        "independent",
+        "local_group",
+        "franchise",
+        "regional_chain",
+        "national_chain",
+      ],
+    })
+      .notNull()
+      .default("independent"),
+    discoveryStatus: text("discovery_status", {
+      enum: ["eligible", "review", "excluded"],
+    })
+      .notNull()
+      .default("review"),
+    discoveryExclusionReason: text("discovery_exclusion_reason"),
+    locationCount: integer("location_count").notNull().default(1),
     neighborhood: text("neighborhood").notNull(),
+    addressLine1: text("address_line_1"),
+    city: text("city"),
+    region: text("region"),
+    postalCode: text("postal_code"),
+    timezone: text("timezone"),
     latitude: real("latitude").notNull(),
     longitude: real("longitude").notNull(),
     cuisineTags: text("cuisine_tags", { mode: "json" })
@@ -41,6 +77,11 @@ export const restaurants = sqliteTable(
   (table) => [
     uniqueIndex("restaurants_slug_idx").on(table.slug),
     index("restaurants_neighborhood_idx").on(table.neighborhood),
+    index("restaurants_discovery_idx").on(
+      table.discoveryStatus,
+      table.ownershipType,
+    ),
+    index("restaurants_venue_type_idx").on(table.venueType),
   ],
 );
 
@@ -178,6 +219,7 @@ export const interactionEvents = sqliteTable(
         "pass",
         "like",
         "save",
+        "unsave",
         "detail",
         "share",
         "handoff",
@@ -196,5 +238,142 @@ export const interactionEvents = sqliteTable(
     index("interaction_user_created_idx").on(table.userId, table.createdAt),
     index("interaction_guest_created_idx").on(table.guestId, table.createdAt),
     index("interaction_restaurant_idx").on(table.restaurantId),
+  ],
+);
+
+export const catalogImports = sqliteTable(
+  "catalog_imports",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider").notNull(),
+    providerPlaceId: text("provider_place_id").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    rawPayload: text("raw_payload", { mode: "json" })
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    ownershipSignals: text("ownership_signals", { mode: "json" })
+      .$type<Record<string, string | number | boolean>>()
+      .notNull(),
+    suggestedOwnershipType: text("suggested_ownership_type", {
+      enum: [
+        "independent",
+        "local_group",
+        "franchise",
+        "regional_chain",
+        "national_chain",
+      ],
+    }).notNull(),
+    suggestedDiscoveryStatus: text("suggested_discovery_status", {
+      enum: ["eligible", "review", "excluded"],
+    }).notNull(),
+    status: text("status", {
+      enum: ["pending", "accepted", "rejected"],
+    })
+      .notNull()
+      .default("pending"),
+    importedAt: integer("imported_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("catalog_import_provider_place_idx").on(
+      table.provider,
+      table.providerPlaceId,
+    ),
+    index("catalog_import_status_idx").on(table.status, table.importedAt),
+  ],
+);
+
+export const catalogReviewEvents = sqliteTable(
+  "catalog_review_events",
+  {
+    id: text("id").primaryKey(),
+    catalogImportId: text("catalog_import_id")
+      .notNull()
+      .references(() => catalogImports.id, { onDelete: "cascade" }),
+    restaurantId: text("restaurant_id").references(() => restaurants.id, {
+      onDelete: "set null",
+    }),
+    reviewerId: text("reviewer_id").notNull(),
+    action: text("action", {
+      enum: ["accept", "reject", "needs_more_evidence"],
+    }).notNull(),
+    ownershipType: text("ownership_type", {
+      enum: [
+        "independent",
+        "local_group",
+        "franchise",
+        "regional_chain",
+        "national_chain",
+      ],
+    }).notNull(),
+    discoveryStatus: text("discovery_status", {
+      enum: ["eligible", "review", "excluded"],
+    }).notNull(),
+    reasonCode: text("reason_code").notNull(),
+    evidenceUrls: text("evidence_urls", { mode: "json" })
+      .$type<string[]>()
+      .notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("catalog_review_import_idx").on(
+      table.catalogImportId,
+      table.createdAt,
+    ),
+    index("catalog_review_restaurant_idx").on(table.restaurantId),
+  ],
+);
+
+export const restaurantHours = sqliteTable(
+  "restaurant_hours",
+  {
+    id: text("id").primaryKey(),
+    restaurantId: text("restaurant_id")
+      .notNull()
+      .references(() => restaurants.id, { onDelete: "cascade" }),
+    dayOfWeek: integer("day_of_week").notNull(),
+    opensAt: text("opens_at"),
+    closesAt: text("closes_at"),
+    isClosed: integer("is_closed", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    sourceType: text("source_type", {
+      enum: ["merchant", "official_site", "provider", "unknown"],
+    }).notNull(),
+    verifiedAt: integer("verified_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("restaurant_hours_restaurant_day_idx").on(
+      table.restaurantId,
+      table.dayOfWeek,
+    ),
+  ],
+);
+
+export const savedRestaurants = sqliteTable(
+  "saved_restaurants",
+  {
+    id: text("id").primaryKey(),
+    principalId: text("principal_id").notNull(),
+    restaurantId: text("restaurant_id")
+      .notNull()
+      .references(() => restaurants.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("saved_principal_restaurant_idx").on(
+      table.principalId,
+      table.restaurantId,
+    ),
+    index("saved_principal_created_idx").on(
+      table.principalId,
+      table.createdAt,
+    ),
   ],
 );

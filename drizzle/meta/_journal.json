@@ -8,6 +8,27 @@
       "when": 1785107780156,
       "tag": "0000_dry_scarlet_spider",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1785110120173,
+      "tag": "0001_dear_junta",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785111543492,
+      "tag": "0002_amusing_kat_farrell",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1785112527292,
+      "tag": "0003_powerful_doctor_octopus",
+      "breakpoints": true
     }
   ]
 }

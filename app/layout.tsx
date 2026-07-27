@@ -25,7 +25,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const origin = `${protocol}://${host}`;
   const title = "Food Discovery MVP";
   const description =
-    "A preference-aware, restriction-conscious way to decide what to eat nearby.";
+    "A preference-aware way to discover independent restaurants, cafés, boba shops, and other local food spots.";
 
   return {
     title: {
