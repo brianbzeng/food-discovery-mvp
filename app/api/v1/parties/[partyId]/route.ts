@@ -24,6 +24,11 @@ export async function GET(request: Request, context: RouteContext) {
       identity,
     );
   } catch (error) {
-    return partyErrorResponse(error, identity);
+    return partyErrorResponse(
+      request,
+      "/api/v1/parties/:partyId",
+      error,
+      identity,
+    );
   }
 }

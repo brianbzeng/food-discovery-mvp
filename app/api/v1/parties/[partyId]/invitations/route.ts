@@ -1,7 +1,6 @@
 import { createPartyInvitation } from "../../../../../../db/party-store";
 import {
   assertOnlyPartyKeys,
-  assertSameOriginMutation,
   partyErrorResponse,
   partyJson,
   readBoundedPartyJson,
@@ -17,7 +16,6 @@ type RouteContext = {
 export async function POST(request: Request, context: RouteContext) {
   const identity = await resolvePartyIdentity(request);
   try {
-    assertSameOriginMutation(request);
     const partyId = await routePartyId(context);
     const body = await readBoundedPartyJson(request);
     assertOnlyPartyKeys(body, ["displayName"]);
@@ -42,6 +40,11 @@ export async function POST(request: Request, context: RouteContext) {
       201,
     );
   } catch (error) {
-    return partyErrorResponse(error, identity);
+    return partyErrorResponse(
+      request,
+      "/api/v1/parties/:partyId/invitations",
+      error,
+      identity,
+    );
   }
 }

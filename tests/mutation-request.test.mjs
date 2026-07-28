@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertSameOriginEmptyMutation,
   MutationRequestError,
   readSameOriginJson,
 } from "../app/lib/mutation-request.ts";
@@ -85,5 +86,54 @@ test("rejects simple-request content types and oversized bodies", async () => {
       error instanceof MutationRequestError &&
       error.code === "payload-too-large" &&
       error.status === 413,
+  );
+});
+
+test("accepts same-origin bodyless mutations and rejects body smuggling", async () => {
+  await assert.doesNotReject(() =>
+    assertSameOriginEmptyMutation(
+      new Request("https://food.example/api/v1/account", {
+        method: "DELETE",
+        headers: { origin: "https://food.example" },
+      }),
+    ),
+  );
+
+  await assert.rejects(
+    () =>
+      assertSameOriginEmptyMutation(
+        new Request("https://food.example/api/v1/account", {
+          method: "DELETE",
+          headers: {
+            "content-type": "text/plain",
+            origin: "https://food.example",
+          },
+          body: "delete=true",
+        }),
+      ),
+    (error) =>
+      error instanceof MutationRequestError &&
+      error.code === "unexpected-request-body" &&
+      error.status === 415,
+  );
+});
+
+test("bodyless mutations reject cross-origin requests before inspecting bodies", async () => {
+  await assert.rejects(
+    () =>
+      assertSameOriginEmptyMutation(
+        new Request("https://food.example/api/v1/account", {
+          method: "DELETE",
+          headers: {
+            "content-type": "text/plain",
+            origin: "https://attacker.example",
+          },
+          body: "delete=true",
+        }),
+      ),
+    (error) =>
+      error instanceof MutationRequestError &&
+      error.code === "cross-origin-mutation" &&
+      error.status === 403,
   );
 });

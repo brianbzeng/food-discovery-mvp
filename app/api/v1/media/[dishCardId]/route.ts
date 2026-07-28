@@ -1,10 +1,11 @@
 import { getPublishedMedia } from "../../../../../db/media-store";
+import { logOperationalError } from "../../../../lib/observability";
 
 type RouteContext = {
   params: Promise<{ dishCardId: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const dishCardId = (await context.params).dishCardId?.trim().slice(0, 100);
   if (!dishCardId) {
     return Response.json({ error: { code: "invalid-media" } }, { status: 400 });
@@ -30,7 +31,17 @@ export async function GET(_request: Request, context: RouteContext) {
     }
 
     return new Response(media.object.body, { headers });
-  } catch {
+  } catch (error) {
+    logOperationalError(
+      request,
+      {
+        route: "/api/v1/media/:dishCardId",
+        operation: "read_media",
+        status: 503,
+        code: "media-unavailable",
+      },
+      error,
+    );
     return Response.json(
       { error: { code: "media-unavailable" } },
       { status: 503 },

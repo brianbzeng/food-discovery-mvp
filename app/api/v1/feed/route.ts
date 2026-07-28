@@ -6,6 +6,7 @@ import {
   resolveProductIdentity,
   tasteJson,
 } from "../../../lib/taste-identity";
+import { logOperationalError } from "../../../lib/observability";
 
 function numeric(value: string | null): number | undefined {
   if (value === null || value.trim() === "") return undefined;
@@ -43,7 +44,17 @@ export async function GET(request: Request) {
       await createRecommendationFeed(identity.principalId, intent, limit),
       identity,
     );
-  } catch {
+  } catch (error) {
+    logOperationalError(
+      request,
+      {
+        route: "/api/v1/feed",
+        operation: "read_feed",
+        status: 503,
+        code: "feed-unavailable",
+      },
+      error,
+    );
     return tasteJson(
       {
         error: {

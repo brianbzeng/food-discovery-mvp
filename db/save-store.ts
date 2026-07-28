@@ -5,6 +5,13 @@ type SavedRow = {
   created_at: number;
 };
 
+export class SaveEligibilityError extends Error {
+  constructor() {
+    super("Restaurant is not eligible to save.");
+    this.name = "SaveEligibilityError";
+  }
+}
+
 export async function listSavedRestaurants(principalId: string) {
   const db = await getD1();
   const result = await db
@@ -57,7 +64,7 @@ export async function saveRestaurant(
       )
       .bind(principalId, restaurantId)
       .first<{ id: string }>();
-    if (!existing) throw new Error("Restaurant is not eligible to save.");
+    if (!existing) throw new SaveEligibilityError();
   }
 
   return listSavedRestaurants(principalId);

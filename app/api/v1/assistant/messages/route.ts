@@ -10,27 +10,36 @@ import {
   resolveProductIdentity,
   tasteJson,
 } from "../../../../lib/taste-identity";
+import {
+  MutationRequestError,
+  readSameOriginJson,
+} from "../../../../lib/mutation-request";
+import { logOperationalError } from "../../../../lib/observability";
 
 export async function POST(request: Request) {
   const identity = await resolveProductIdentity(request);
 
   let body: Record<string, unknown>;
   try {
-    const value = (await request.json()) as unknown;
+    const value = await readSameOriginJson(request);
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new Error("Invalid message");
     }
     body = value as Record<string, unknown>;
-  } catch {
+  } catch (error) {
+    const requestError =
+      error instanceof MutationRequestError ? error : undefined;
     return tasteJson(
       {
         error: {
-          code: "invalid-message",
-          message: "The assistant message must be a JSON object.",
+          code: requestError?.code ?? "invalid-message",
+          message:
+            requestError?.message ??
+            "The assistant message must be a JSON object.",
         },
       },
       identity,
-      400,
+      requestError?.status ?? 400,
     );
   }
 
@@ -100,7 +109,17 @@ export async function POST(request: Request) {
       },
       identity,
     );
-  } catch {
+  } catch (error) {
+    logOperationalError(
+      request,
+      {
+        route: "/api/v1/assistant/messages",
+        operation: "assistant_recommendations",
+        status: 503,
+        code: "assistant-unavailable",
+      },
+      error,
+    );
     return tasteJson(
       {
         error: {

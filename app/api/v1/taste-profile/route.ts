@@ -15,6 +15,7 @@ import {
   resolveProductIdentity,
   tasteJson,
 } from "../../../lib/taste-identity";
+import { logOperationalError } from "../../../lib/observability";
 
 export async function GET(request: Request) {
   const identity = await resolveProductIdentity(request);
@@ -24,7 +25,17 @@ export async function GET(request: Request) {
       identity.principalId,
     );
     return tasteJson({ profile: toPublicTasteProfile(profile) }, identity);
-  } catch {
+  } catch (error) {
+    logOperationalError(
+      request,
+      {
+        route: "/api/v1/taste-profile",
+        operation: "read_taste_profile",
+        status: 503,
+        code: "taste-storage-unavailable",
+      },
+      error,
+    );
     return tasteJson(
       {
         error: {
@@ -73,7 +84,17 @@ export async function PUT(request: Request) {
       { profile: toPublicTasteProfile(profile) },
       identity,
     );
-  } catch {
+  } catch (error) {
+    logOperationalError(
+      request,
+      {
+        route: "/api/v1/taste-profile",
+        operation: "update_taste_profile",
+        status: 503,
+        code: "settings-storage-unavailable",
+      },
+      error,
+    );
     return tasteJson(
       {
         error: {

@@ -1,10 +1,11 @@
 import { getRestaurantDetails } from "../../../../../db/place-store";
+import { logOperationalError } from "../../../../lib/observability";
 
 type RouteContext = {
   params: Promise<{ restaurantId: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const restaurantId = (await context.params).restaurantId?.trim().slice(0, 100);
   if (!restaurantId) {
     return Response.json(
@@ -33,7 +34,17 @@ export async function GET(_request: Request, context: RouteContext) {
     }
 
     return Response.json({ restaurant });
-  } catch {
+  } catch (error) {
+    logOperationalError(
+      request,
+      {
+        route: "/api/v1/restaurants/:restaurantId",
+        operation: "read_restaurant",
+        status: 503,
+        code: "restaurant-unavailable",
+      },
+      error,
+    );
     return Response.json(
       {
         error: {

@@ -7,6 +7,11 @@ import {
   resolveProductIdentity,
   tasteJson,
 } from "../../../lib/taste-identity";
+import {
+  assertSameOriginEmptyMutation,
+  MutationRequestError,
+} from "../../../lib/mutation-request";
+import { logOperationalError } from "../../../lib/observability";
 
 export async function GET(request: Request) {
   const identity = await resolveProductIdentity(request);
@@ -15,7 +20,17 @@ export async function GET(request: Request) {
       { account: await accountSummary(identity.principalId) },
       identity,
     );
-  } catch {
+  } catch (error) {
+    logOperationalError(
+      request,
+      {
+        route: "/api/v1/account",
+        operation: "read_account",
+        status: 503,
+        code: "account-unavailable",
+      },
+      error,
+    );
     return tasteJson(
       {
         error: {
@@ -32,10 +47,39 @@ export async function GET(request: Request) {
 export async function DELETE(request: Request) {
   const identity = await resolveProductIdentity(request);
   try {
+    await assertSameOriginEmptyMutation(request);
+  } catch (error) {
+    const requestError =
+      error instanceof MutationRequestError ? error : undefined;
+    return tasteJson(
+      {
+        error: {
+          code: requestError?.code ?? "invalid-deletion-request",
+          message:
+            requestError?.message ??
+            "The account deletion request is invalid.",
+        },
+      },
+      identity,
+      requestError?.status ?? 400,
+    );
+  }
+
+  try {
     await deleteAccountData(identity.principalId);
     identity.setCookies.push(...expireTasteCookies(request));
     return tasteJson({ deleted: true }, identity);
-  } catch {
+  } catch (error) {
+    logOperationalError(
+      request,
+      {
+        route: "/api/v1/account",
+        operation: "delete_account",
+        status: 503,
+        code: "account-deletion-unavailable",
+      },
+      error,
+    );
     return tasteJson(
       {
         error: {

@@ -4,7 +4,6 @@ import {
 } from "../../../../db/party-store";
 import {
   assertOnlyPartyKeys,
-  assertSameOriginMutation,
   optionalFairnessStrategy,
   optionalPartyBoolean,
   partyErrorResponse,
@@ -24,14 +23,18 @@ export async function GET(request: Request) {
       identity,
     );
   } catch (error) {
-    return partyErrorResponse(error, identity);
+    return partyErrorResponse(
+      request,
+      "/api/v1/parties",
+      error,
+      identity,
+    );
   }
 }
 
 export async function POST(request: Request) {
   const identity = await resolvePartyIdentity(request);
   try {
-    assertSameOriginMutation(request);
     const body = await readBoundedPartyJson(request);
     assertOnlyPartyKeys(body, [
       "name",
@@ -53,6 +56,11 @@ export async function POST(request: Request) {
     });
     return partyJson({ party }, identity, 201);
   } catch (error) {
-    return partyErrorResponse(error, identity);
+    return partyErrorResponse(
+      request,
+      "/api/v1/parties",
+      error,
+      identity,
+    );
   }
 }

@@ -1,73 +1,88 @@
 # Food Discovery MVP
 
-A working foundation for a preference-aware local food and beverage discovery
-product. The consumer-facing name is intentionally undecided;
-`food-discovery-mvp` is the repository and engineering name.
+A preference-aware local food discovery product running on Cloudflare Workers,
+D1, and R2. `food-discovery-mvp` is the repository and engineering name; the
+consumer-facing name is still open.
 
 ## What exists
 
-- Responsive interactive discovery feed for independent restaurants, cafés,
-  boba shops, tea houses, bakeries, dessert shops, and juice bars
-- Natural-language demo search with editable preference filters
-- Breakfast, brunch, lunch, dinner, late-night, and snack intent from the first
-  visit
+- Responsive discovery feed for independent restaurants, cafes, boba shops,
+  tea houses, bakeries, dessert shops, and juice bars.
+- First-visit breakfast, brunch, lunch, dinner, late-night, and snack intent.
+- Natural-language craving interpretation with editable, visible filters.
 - Context-aware `Not now`, `Save`, `More like this`, and permanent-hide
-  feedback
-- D1-backed anonymous taste profiles and interaction history
-- Global and meal-specific preference weights, decaying negative signals, and
-  deterministic controlled exploration
-- Catalog eligibility that excludes franchises and regional or national chains
-  before ranking
-- D1-backed eligible feed and structured search endpoints with explainable
-  ranking components
-- Quarantined provider imports and an auditable ownership-review data model
-- Restaurant detail drawer with external-action placeholders
-- Dish, shared-kitchen, and venue-wide allergy-evidence scopes that distinguish
-  verified and unknown information
-- Persistent, user-editable allergen and dietary settings with an option to
-  use dish-aware warnings or strict whole-place exclusion
-- Persistent shortlist plus eligible place-detail, weekly-hours, menu, call,
-  and directions endpoints
-- Conversational craving interpretation with visible chips and grounded,
-  safety-preserving recommendation explanations
-- Cookie-scoped private guest profiles plus self-service data export and
-  permanent deletion; public sign-in is intentionally disabled until a
-  cryptographically verified authentication gateway exists
-- API-first party invitations and fair “something for everyone”
-  recommendations that enforce every accepted member’s hard constraints
-- Fail-closed contracts for a future grounded RAG assistant; no production LLM
-  call or vector index is enabled yet
-- Operator-triggered OpenStreetMap candidate discovery with mandatory human
-  ownership review and source attribution
-- Rights-gated R2 media storage that cannot serve pending, rejected, or expired
-  assets
-- Typed restaurant, dish, media-rights, restriction, taste-profile, and
-  interaction-event schema
-- Cloudflare-compatible D1 and R2 bindings for structured data and media
+  feedback.
+- D1-backed anonymous taste profiles, interaction history, and shortlist.
+- Meal-specific preference learning, decaying negative signals, and
+  deterministic controlled exploration.
+- Catalog eligibility that removes franchises and regional or national chains
+  before ranking.
+- Dish-level allergen and dietary evidence. One conflicting dish does not hide
+  a restaurant when another screened dish remains suitable.
+- Separate dish, shared-kitchen, and venue evidence with persistent warnings for
+  unknown or cross-contact conditions.
+- A private party planner at `/party` for creating a plan, sharing a one-time
+  fragment-based invite, joining in another browser, and comparing
+  group-fairness recommendations without exposing member profiles.
+- Account summary, JSON export, and permanent deletion for the current guest.
+- About, Privacy, Terms, and custom 404 pages.
+- A readiness endpoint at `GET /api/v1/health`.
+- Privacy-safe structured operational errors, persisted invocation logs, and
+  sampled traces.
+- Fail-closed contracts for a future grounded RAG assistant. No production LLM
+  or vector index is enabled.
+- Quarantined OpenStreetMap candidate discovery with mandatory ownership review.
+- Rights-gated R2 media storage.
+- Unit, contract, isolated-D1 integration, and Playwright browser regressions
+  plus GitHub Actions CI.
 
-The restaurant names and product records currently shown in the UI are
-fictional demo data.
+All restaurant and menu records currently shown in the consumer UI are
+fictional pilot data.
 
 ## Run locally
 
 Requires Node.js `>=22.13.0`.
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-Then open `http://localhost:3000`.
+Open `http://localhost:3000`.
+
+For a production-shaped local preview:
+
+```bash
+npm run build
+npm run start
+```
 
 ## Validate
 
 ```bash
-npm run build
-npm test
 npm run lint
 npm run typecheck
-npm run swift:build
+npm test
+npm run e2e
+npm run deploy:dry-run
+npm audit --omit=dev --audit-level=high
 ```
+
+The browser suite installs separately with:
+
+```bash
+npx playwright install chromium
+```
+
+The full npm audit currently reports nine high-severity advisories in the
+development-only ESLint dependency tree. Production dependencies report zero.
+Do not use `npm audit fix --force`: its proposed ESLint major conflicts with
+the current React and JSX lint plugins.
+
+`npm run swift:build` validates the Swift package when a Swift toolchain is
+available.
+
+## Catalog and database work
 
 Preview nearby OpenStreetMap candidates without publishing or persisting them:
 
@@ -81,41 +96,62 @@ Generate a migration after editing `db/schema.ts`:
 npm run db:generate
 ```
 
-Apply D1 migrations and deploy the already-built Worker:
+Before a production schema change, capture a D1 Time Travel bookmark. Apply
+migrations before deploying code that reads the changed schema:
 
 ```bash
-npx wrangler d1 migrations apply site-creator-d1 --remote --config wrangler.jsonc
+npx wrangler d1 migrations list DB --remote --config wrangler.jsonc
+npx wrangler d1 migrations apply DB --remote --config wrangler.jsonc
+npm run build
 npx wrangler deploy --config dist/server/wrangler.json
 ```
 
-Always run the full validation commands first. Production schema migrations
-must be applied before deploying code that reads the new columns or tables.
+The generated `dist/server/wrangler.json` is the deployment artifact. The root
+`wrangler.jsonc` is the reviewed source configuration for bindings,
+compatibility, and observability.
+
+See `docs/staging-runbook.md` for isolated staging resource creation, migration
+rehearsal, remote Playwright verification, promotion gates, and incident checks.
 
 ## Architecture
 
-- `app/`: responsive web product and demo data
-- `db/schema.ts`: durable catalog, ownership, preference, and event schema
-- `db/taste-store.ts`: persistent taste-profile and interaction operations
-- `db/party-store.ts`: creator-scoped parties and one-time invitation lifecycle
-- `app/api/v1/`: shared HTTP surface for the web client and future Swift client
-- `drizzle/`: generated D1 migrations
-- `wrangler.jsonc`: source-of-truth D1/R2 bindings and migration directory
-- `.openai/hosting.json`: logical hosting bindings
-- `docs/product-contracts.md`: shared product and future API contracts
-- `docs/catalog-sources.md`: provider, attribution, review, and media-rights
-  policy
-- `ios/`: shared Swift API package, SwiftUI app shell, and TestFlight checklist
+- `app/`: web product, routes, and server-side policy.
+- `app/party/`: private party-planning interface.
+- `app/api/v1/`: shared HTTP surface for web and future Swift clients.
+- `app/lib/recommendations.ts`: deterministic ranking and safety behavior.
+- `app/lib/party-recommendations.ts`: party hard-constraint intersection and
+  fairness.
+- `app/lib/assistant-retrieval-contracts.ts`: grounded RAG trust boundary.
+- `app/lib/mutation-request.ts`: shared mutation request protections.
+- `app/lib/observability.ts`: bounded, privacy-safe error events.
+- `db/schema.ts`: catalog, evidence, profile, save, interaction, and party
+  schema.
+- `drizzle/`: D1 migrations.
+- `e2e/`: browser regressions.
+- `.github/workflows/ci.yml`: clean-install validation.
+- `wrangler.jsonc`: source-of-truth Cloudflare bindings.
+- `.openai/hosting.json`: existing Sites control-plane metadata; Cloudflare
+  Workers remains the active production host.
 
-The web and SwiftUI clients use the same HTTP contracts and server-side
-eligibility, ranking, identity, and allergy policy. Party planning is currently
-API-only; the web and Swift clients do not yet expose party screens.
+## Trust boundaries
+
+- The public Worker trusts only validated opaque first-party guest cookies.
+  Caller-supplied email or identity headers are ignored.
+- Public sign-in remains disabled until the Worker validates a cryptographic
+  identity token.
+- Eligibility and safety always run before ranking, semantic retrieval, or an
+  LLM.
+- Unknown allergy evidence is never labeled safe.
+- Party recommendation responses contain aggregates and the caller's own
+  outcome, never other members' restrictions, allergens, history, or weights.
+- Invitation tokens are stored only as hashes and are placed in URL fragments,
+  not query strings.
 
 ## Current boundaries
 
-The implementation does not include verified account sign-in, production AI
-calls, a vector index, party UI or invitation delivery, public user uploads,
-reviews, ordering, payments, automated ownership publication, or restaurant
-promotions. Current consumer records remain fictional pilot data; real provider
-records are quarantined until reviewed. Privacy and Terms pages are an MVP
-baseline that still requires qualified legal review before a public commercial
+The implementation does not yet include verified accounts, cross-device guest
+merging, real production catalog coverage, live model calls, embeddings,
+Vectorize, invitation email/SMS delivery, accepted-member removal or creator
+transfer, public uploads, reviews, ordering, payments, or promotions. Terms and
+Privacy are an MVP baseline requiring qualified legal review before commercial
 launch.

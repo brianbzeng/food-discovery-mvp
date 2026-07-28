@@ -1,7 +1,6 @@
 import { respondToPartyInvitation } from "../../../../../db/party-store";
 import {
   assertOnlyPartyKeys,
-  assertSameOriginMutation,
   partyErrorResponse,
   partyJson,
   readBoundedPartyJson,
@@ -13,7 +12,6 @@ import {
 export async function POST(request: Request) {
   const identity = await resolvePartyIdentity(request);
   try {
-    assertSameOriginMutation(request);
     const body = await readBoundedPartyJson(request);
     assertOnlyPartyKeys(body, ["inviteToken", "response"]);
     const result = await respondToPartyInvitation({
@@ -29,6 +27,11 @@ export async function POST(request: Request) {
 
     return partyJson(result, identity);
   } catch (error) {
-    return partyErrorResponse(error, identity);
+    return partyErrorResponse(
+      request,
+      "/api/v1/party-invitations/respond",
+      error,
+      identity,
+    );
   }
 }

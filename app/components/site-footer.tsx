@@ -8,6 +8,7 @@ export function SiteFooter() {
         <p>Local discovery · MVP</p>
       </div>
       <nav className="site-footer__links" aria-label="Project and legal">
+        <Link href="/party">Group plan</Link>
         <Link href="/about">About</Link>
         <Link href="/privacy">Privacy</Link>
         <Link href="/terms">Terms</Link>

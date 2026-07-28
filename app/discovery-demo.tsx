@@ -328,6 +328,7 @@ export function DiscoveryDemo() {
   const [signals, setSignals] = useState(0);
   const profileVersion = useRef(0);
   const accountPrompted = useRef(false);
+  const discoveryChoices = useRef(0);
   const [syncState, setSyncState] = useState<SyncState>("loading");
   const [locationState, setLocationState] = useState<LocationState>("idle");
   const [coordinates, setCoordinates] = useState<Coordinates | undefined>();
@@ -580,6 +581,8 @@ export function DiscoveryDemo() {
       setLearnedWeights({});
       setTasteSignals([]);
       setSignals(0);
+      discoveryChoices.current = 0;
+      accountPrompted.current = false;
       setAllergens([]);
       setDietaryRestrictions([]);
       setShowUnknownAllergyMatches(true);
@@ -630,13 +633,14 @@ export function DiscoveryDemo() {
   function moveCard(action: "pass" | "like") {
     if (!current) return;
     remember(action, current);
+    discoveryChoices.current += 1;
     setQueue((cards) => {
       const next = cards.length > 1 ? cards.slice(1) : demoCards;
       return next;
     });
     setSignals((value) => value + 1);
     if (
-      signals >= 4 &&
+      discoveryChoices.current >= 5 &&
       !account?.authenticated &&
       !accountPrompted.current
     ) {
@@ -805,6 +809,7 @@ export function DiscoveryDemo() {
           <a className="active" href="#discover">
             Discover
           </a>
+          <a href="/party">Group plan</a>
           <button type="button" onClick={() => setShortlistOpen(true)}>
             Shortlist {saved.length > 0 && `(${saved.length})`}
           </button>

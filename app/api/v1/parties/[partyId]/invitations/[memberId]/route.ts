@@ -1,6 +1,6 @@
 import { revokePartyInvitation } from "../../../../../../../db/party-store";
 import {
-  assertSameOriginMutation,
+  assertBodylessPartyMutation,
   partyErrorResponse,
   partyJson,
   resolvePartyIdentity,
@@ -14,7 +14,7 @@ type RouteContext = {
 export async function DELETE(request: Request, context: RouteContext) {
   const identity = await resolvePartyIdentity(request);
   try {
-    assertSameOriginMutation(request);
+    await assertBodylessPartyMutation(request);
     const { partyId, memberId } = await routeMemberId(context);
     return partyJson(
       {
@@ -27,6 +27,11 @@ export async function DELETE(request: Request, context: RouteContext) {
       identity,
     );
   } catch (error) {
-    return partyErrorResponse(error, identity);
+    return partyErrorResponse(
+      request,
+      "/api/v1/parties/:partyId/invitations/:memberId",
+      error,
+      identity,
+    );
   }
 }

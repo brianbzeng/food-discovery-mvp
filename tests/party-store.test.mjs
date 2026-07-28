@@ -596,4 +596,19 @@ test("party catalog loads all published sibling dishes and route helpers reject 
       error instanceof PartyApiInputError &&
       error.code === "party-body-too-large",
   );
+
+  await assert.rejects(
+    () =>
+      readBoundedPartyJson(
+        new Request("https://food.example/api/v1/parties", {
+          method: "POST",
+          headers: { "content-type": "text/plain" },
+          body: "{}",
+        }),
+      ),
+    (error) =>
+      error instanceof PartyApiInputError &&
+      error.code === "unsupported-party-media-type" &&
+      error.status === 415,
+  );
 });

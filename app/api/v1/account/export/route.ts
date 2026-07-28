@@ -1,4 +1,5 @@
 import { exportAccountData } from "../../../../../db/account-store";
+import { logOperationalError } from "../../../../lib/observability";
 import { resolveProductIdentity } from "../../../../lib/taste-identity";
 
 export async function GET(request: Request) {
@@ -20,7 +21,17 @@ export async function GET(request: Request) {
       JSON.stringify(await exportAccountData(identity.principalId), null, 2),
       { headers },
     );
-  } catch {
+  } catch (error) {
+    logOperationalError(
+      request,
+      {
+        route: "/api/v1/account/export",
+        operation: "export_account",
+        status: 503,
+        code: "account-export-unavailable",
+      },
+      error,
+    );
     return Response.json(
       {
         error: {

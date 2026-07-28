@@ -105,6 +105,7 @@ type RecommendationResult = {
 - `GET /api/v1/account`
 - `GET /api/v1/account/export`
 - `DELETE /api/v1/account`
+- `GET /api/v1/health`
 - `GET /api/v1/parties`
 - `POST /api/v1/parties`
 - `GET /api/v1/parties/{partyId}`
@@ -118,6 +119,17 @@ HTTP-only first-party cookie; interaction and taste data live in D1 rather than
 browser storage. Caller-supplied identity and email headers are ignored.
 Authenticated account identity and guest-to-account merging are dormant until
 a cryptographically verified authentication gateway is implemented.
+
+Every state-changing route enforces the shared mutation contract before
+business logic: same-origin browser provenance, the expected content type, and
+a bounded request body. Bodyless mutations reject non-empty bodies. Search and
+the deterministic assistant endpoint use the same JSON boundary even though
+they do not persist state. New mutation routes must be added to the inventory
+test in `tests/mutation-routes.test.mjs`.
+
+`GET /api/v1/health` is an uncached readiness check. It verifies that the Worker
+can query the configured D1 binding and returns only component status; it does
+not expose binding identifiers, schema, catalog rows, profiles, or errors.
 
 `GET /api/v1/feed` accepts repeatable `venueType`, `priceTier`, `allergen`, and
 `dietaryRestriction` query parameters plus `q`, coordinates, radius, and limit.

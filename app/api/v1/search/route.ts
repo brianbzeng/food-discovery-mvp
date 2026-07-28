@@ -6,23 +6,32 @@ import {
   resolveProductIdentity,
   tasteJson,
 } from "../../../lib/taste-identity";
+import {
+  MutationRequestError,
+  readSameOriginJson,
+} from "../../../lib/mutation-request";
+import { logOperationalError } from "../../../lib/observability";
 
 export async function POST(request: Request) {
   const identity = await resolveProductIdentity(request);
 
   let body: unknown;
   try {
-    body = await request.json();
-  } catch {
+    body = await readSameOriginJson(request);
+  } catch (error) {
+    const requestError =
+      error instanceof MutationRequestError ? error : undefined;
     return tasteJson(
       {
         error: {
-          code: "invalid-json",
-          message: "The search request must be valid JSON.",
+          code: requestError?.code ?? "invalid-json",
+          message:
+            requestError?.message ??
+            "The search request must be valid JSON.",
         },
       },
       identity,
-      400,
+      requestError?.status ?? 400,
     );
   }
 
@@ -35,7 +44,17 @@ export async function POST(request: Request) {
       await createRecommendationFeed(identity.principalId, intent),
       identity,
     );
-  } catch {
+  } catch (error) {
+    logOperationalError(
+      request,
+      {
+        route: "/api/v1/search",
+        operation: "search_catalog",
+        status: 503,
+        code: "search-unavailable",
+      },
+      error,
+    );
     return tasteJson(
       {
         error: {

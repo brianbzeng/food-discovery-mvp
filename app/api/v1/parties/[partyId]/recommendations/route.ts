@@ -43,6 +43,11 @@ export async function GET(request: Request, context: RouteContext) {
     });
     return partyJson(feed, identity);
   } catch (error) {
-    return partyErrorResponse(error, identity);
+    return partyErrorResponse(
+      request,
+      "/api/v1/parties/:partyId/recommendations",
+      error,
+      identity,
+    );
   }
 }

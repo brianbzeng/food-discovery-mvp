@@ -22,6 +22,7 @@ export default defineConfig(async () => {
 
   // Wrangler snapshots its log path while the Cloudflare plugin is imported.
   const { cloudflare } = await import("@cloudflare/vite-plugin");
+  const e2ePersistPath = process.env.CLOUDFLARE_VITE_PERSIST_PATH;
 
   return {
     server: isCodexSeatbeltSandbox
@@ -33,6 +34,9 @@ export default defineConfig(async () => {
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
         config: localBindingConfig,
+        persistState: e2ePersistPath
+          ? { path: e2ePersistPath }
+          : undefined,
       }),
     ],
   };

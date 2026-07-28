@@ -20,6 +20,7 @@ import {
   getEligibleCatalogCandidate,
   type CatalogCandidate,
 } from "../../../../db/catalog-store";
+import { logOperationalError } from "../../../lib/observability";
 
 type InteractionBody = {
   restaurantId?: unknown;
@@ -123,7 +124,17 @@ export async function POST(request: Request) {
   let candidate: CatalogCandidate | null;
   try {
     candidate = await getEligibleCatalogCandidate(restaurantId, dishCardId);
-  } catch {
+  } catch (error) {
+    logOperationalError(
+      request,
+      {
+        route: "/api/v1/interactions",
+        operation: "check_catalog_eligibility",
+        status: 503,
+        code: "catalog-storage-unavailable",
+      },
+      error,
+    );
     return tasteJson(
       {
         error: {
@@ -173,7 +184,17 @@ export async function POST(request: Request) {
       identity,
       201,
     );
-  } catch {
+  } catch (error) {
+    logOperationalError(
+      request,
+      {
+        route: "/api/v1/interactions",
+        operation: "record_interaction",
+        status: 503,
+        code: "interaction-storage-unavailable",
+      },
+      error,
+    );
     return tasteJson(
       {
         error: {

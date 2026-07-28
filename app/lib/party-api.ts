@@ -4,6 +4,13 @@ import {
   tasteJson,
   type TasteIdentity,
 } from "./taste-identity.ts";
+import {
+  assertSameOriginEmptyMutation,
+  assertSameOriginMutation as assertSharedSameOriginMutation,
+  MutationRequestError,
+  readSameOriginJson,
+} from "./mutation-request.ts";
+import { logOperationalError } from "./observability.ts";
 import { PartyStoreError } from "../../db/party-store.ts";
 
 const MAX_JSON_BYTES = 16 * 1024;
@@ -44,6 +51,8 @@ export function partyJson(
 }
 
 export function partyErrorResponse(
+  request: Request,
+  route: string,
   error: unknown,
   identity: TasteIdentity,
 ): Response {
@@ -72,11 +81,15 @@ export function partyErrorResponse(
     );
   }
 
-  console.error(
-    JSON.stringify({
-      message: "party request failed",
-      error: error instanceof Error ? error.message : "Unknown error",
-    }),
+  logOperationalError(
+    request,
+    {
+      route,
+      operation: "party_request",
+      status: 503,
+      code: "party-unavailable",
+    },
+    error,
   );
   return partyJson(
     {
@@ -91,91 +104,31 @@ export function partyErrorResponse(
 }
 
 export function assertSameOriginMutation(request: Request): void {
-  const fetchSite = request.headers.get("sec-fetch-site");
-  if (fetchSite === "cross-site") {
-    throw new PartyApiInputError(
-      "cross-site-request-blocked",
-      403,
-      "Cross-site party changes are not allowed.",
-    );
-  }
-
-  const origin = request.headers.get("origin");
-  if (!origin) return;
-
-  let parsed: URL;
   try {
-    parsed = new URL(origin);
-  } catch {
-    throw new PartyApiInputError(
-      "invalid-origin",
-      403,
-      "The request origin is invalid.",
-    );
+    assertSharedSameOriginMutation(request);
+  } catch (error) {
+    throw partyMutationRequestError(error);
   }
-  if (parsed.origin !== new URL(request.url).origin) {
-    throw new PartyApiInputError(
-      "cross-site-request-blocked",
-      403,
-      "Cross-site party changes are not allowed.",
-    );
+}
+
+export async function assertBodylessPartyMutation(
+  request: Request,
+): Promise<void> {
+  try {
+    await assertSameOriginEmptyMutation(request);
+  } catch (error) {
+    throw partyMutationRequestError(error);
   }
 }
 
 export async function readBoundedPartyJson(
   request: Request,
 ): Promise<Record<string, unknown>> {
-  const contentLength = request.headers.get("content-length");
-  if (
-    contentLength &&
-    Number.isFinite(Number(contentLength)) &&
-    Number(contentLength) > MAX_JSON_BYTES
-  ) {
-    throw new PartyApiInputError(
-      "party-body-too-large",
-      413,
-      "Party request bodies must be 16 KB or smaller.",
-    );
-  }
-
-  if (!request.body) {
-    throw new PartyApiInputError(
-      "invalid-party-json",
-      400,
-      "A JSON object is required.",
-    );
-  }
-
-  const reader = request.body.getReader();
-  const decoder = new TextDecoder();
-  let json = "";
-  let bytesRead = 0;
-
-  while (true) {
-    const chunk = await reader.read();
-    if (chunk.done) break;
-    bytesRead += chunk.value.byteLength;
-    if (bytesRead > MAX_JSON_BYTES) {
-      await reader.cancel();
-      throw new PartyApiInputError(
-        "party-body-too-large",
-        413,
-        "Party request bodies must be 16 KB or smaller.",
-      );
-    }
-    json += decoder.decode(chunk.value, { stream: true });
-  }
-  json += decoder.decode();
-
   let value: unknown;
   try {
-    value = JSON.parse(json);
-  } catch {
-    throw new PartyApiInputError(
-      "invalid-party-json",
-      400,
-      "A valid JSON object is required.",
-    );
+    value = await readSameOriginJson(request, MAX_JSON_BYTES);
+  } catch (error) {
+    throw partyMutationRequestError(error);
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new PartyApiInputError(
@@ -185,6 +138,55 @@ export async function readBoundedPartyJson(
     );
   }
   return value as Record<string, unknown>;
+}
+
+function partyMutationRequestError(error: unknown): PartyApiInputError {
+  if (!(error instanceof MutationRequestError)) {
+    return new PartyApiInputError(
+      "invalid-party-json",
+      400,
+      "A valid JSON object is required.",
+    );
+  }
+
+  switch (error.code) {
+    case "cross-origin-mutation":
+      return new PartyApiInputError(
+        "cross-site-request-blocked",
+        error.status,
+        "Cross-site party changes are not allowed.",
+      );
+    case "payload-too-large":
+      return new PartyApiInputError(
+        "party-body-too-large",
+        error.status,
+        "Party request bodies must be 16 KB or smaller.",
+      );
+    case "unsupported-media-type":
+      return new PartyApiInputError(
+        "unsupported-party-media-type",
+        error.status,
+        "Party changes accept application/json only.",
+      );
+    case "unexpected-request-body":
+      return new PartyApiInputError(
+        "unexpected-party-body",
+        error.status,
+        "This party action does not accept a request body.",
+      );
+    case "invalid-request-url":
+      return new PartyApiInputError(
+        "invalid-party-request-url",
+        error.status,
+        error.message,
+      );
+    default:
+      return new PartyApiInputError(
+        "invalid-party-json",
+        error.status,
+        "A valid JSON object is required.",
+      );
+  }
 }
 
 export function assertOnlyPartyKeys(
