@@ -22,6 +22,10 @@ import {
   restrictionLabel,
 } from "./lib/restrictions";
 import { SiteFooter } from "./components/site-footer";
+import {
+  SwipeDeck,
+  type SwipeDirection,
+} from "./components/swipe-deck";
 
 const filters = [
   "Open now",
@@ -40,6 +44,14 @@ const mealChoices: Array<{ key: MealOccasion; label: string }> = [
   { key: "snack", label: "Snack" },
 ];
 
+const passReasons = [
+  { code: "not_today", label: "Not today" },
+  { code: "too_far", label: "Too far" },
+  { code: "too_expensive", label: "Too pricey" },
+  { code: "wrong_cuisine", label: "Wrong cuisine" },
+  { code: "dietary_conflict", label: "Dietary conflict" },
+] as const;
+
 type PublicTasteProfile = {
   explicitPreferences: Record<string, number>;
   learnedWeights: Record<string, number>;
@@ -56,6 +68,14 @@ type PublicTasteProfile = {
 type SyncState = "loading" | "saved" | "saving" | "unavailable";
 type LocationState = "idle" | "loading" | "active" | "unavailable";
 type Coordinates = { latitude: number; longitude: number };
+type Sheet =
+  | "none"
+  | "craving"
+  | "settings"
+  | "account"
+  | "shortlist"
+  | "detail"
+  | "pass-reason";
 
 type PlaceDetails = {
   name: string;
@@ -130,6 +150,11 @@ type AssistantResponse = FeedResponse & {
   };
 };
 
+type UndoEntry = {
+  card: DiscoveryCard;
+  action: "pass" | "like" | "never_show";
+};
+
 function venueTypesForFilters(activeFilters: string[]) {
   return [
     ...(activeFilters.includes("Cafés") ? ["cafe", "bakery"] : []),
@@ -163,50 +188,50 @@ function cardsFromFeed(feed: FeedResponse): DiscoveryCard[] {
     );
 
     return {
-        ...card,
-        id: recommendation.dishCardId,
-        restaurantId: recommendation.restaurantId,
-        restaurant: place.restaurantName,
-        dish: place.title,
-        cuisine: place.cuisineTags[0] ?? venueLabel(place.venueType),
-        venueType: place.venueType,
-        ownershipType: place.ownershipType,
-        localityLabel:
-          place.ownershipType === "independent"
-            ? "Independent local business"
-            : "Small local restaurant group",
-        neighborhood: place.neighborhood,
-        price: place.priceDisplay ?? card.price,
-        tags: place.dishTags,
-        preferenceKeys: [
-          `venue:${place.venueType}`,
-          `locality:${place.ownershipType}`,
-          `neighborhood:${place.neighborhood}`,
-          ...place.cuisineTags.map((tag) => `cuisine:${tag}`),
-          ...place.dishTags.map((tag) => `tag:${tag}`),
-        ],
-        serviceModes: place.serviceModes,
-        match: recommendation.score,
-        allergyStatus: safetyWarning
-          ? "unknown"
+      ...card,
+      id: recommendation.dishCardId,
+      restaurantId: recommendation.restaurantId,
+      restaurant: place.restaurantName,
+      dish: place.title,
+      cuisine: place.cuisineTags[0] ?? venueLabel(place.venueType),
+      venueType: place.venueType,
+      ownershipType: place.ownershipType,
+      localityLabel:
+        place.ownershipType === "independent"
+          ? "Independent local business"
+          : "Small local restaurant group",
+      neighborhood: place.neighborhood,
+      price: place.priceDisplay ?? card.price,
+      tags: place.dishTags,
+      preferenceKeys: [
+        `venue:${place.venueType}`,
+        `locality:${place.ownershipType}`,
+        `neighborhood:${place.neighborhood}`,
+        ...place.cuisineTags.map((tag) => `cuisine:${tag}`),
+        ...place.dishTags.map((tag) => `tag:${tag}`),
+      ],
+      serviceModes: place.serviceModes,
+      match: recommendation.score,
+      allergyStatus: safetyWarning
+        ? "unknown"
+        : evidence
+          ? "verified"
+          : card.allergyStatus,
+      allergyLabel: unknownWarning
+        ? "Allergy information unknown"
+        : crossContactWarning
+          ? "Dish evidence found; cross-contact unknown"
           : evidence
-            ? "verified"
-            : card.allergyStatus,
-        allergyLabel: unknownWarning
-          ? "Allergy information unknown"
-          : crossContactWarning
-            ? "Dish evidence found; cross-contact unknown"
-            : evidence
-              ? `${restrictionLabel(evidence.restrictionKey)} evidence available`
-              : card.allergyLabel,
-        allergyDetail:
-          safetyWarning?.message ??
-          (evidence
-            ? `${evidence.status === "compatible" ? "Marked compatible" : "Accommodation reported"} · ${evidence.sourceType.replace("_", " ")}`
-            : card.allergyDetail),
-        evidenceSource: evidence?.sourceType.replace("_", " "),
-        evidenceVerifiedAt: evidence?.verifiedAt,
-      };
+            ? `${restrictionLabel(evidence.restrictionKey)} evidence available`
+            : card.allergyLabel,
+      allergyDetail:
+        safetyWarning?.message ??
+        (evidence
+          ? `${evidence.status === "compatible" ? "Marked compatible" : "Accommodation reported"} · ${evidence.sourceType.replace("_", " ")}`
+          : card.allergyDetail),
+      evidenceSource: evidence?.sourceType.replace("_", " "),
+      evidenceVerifiedAt: evidence?.verifiedAt,
+    };
   });
 }
 
@@ -310,11 +335,8 @@ export function DiscoveryDemo() {
   const [status, setStatus] = useState(
     "Starting with independent eateries, cafés, and drink spots near you.",
   );
-  const [detailOpen, setDetailOpen] = useState(false);
+  const [sheet, setSheet] = useState<Sheet>("none");
   const [placeDetails, setPlaceDetails] = useState<PlaceDetails | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false);
-  const [shortlistOpen, setShortlistOpen] = useState(false);
   const [account, setAccount] = useState<AccountSummary | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -328,11 +350,25 @@ export function DiscoveryDemo() {
   const [signals, setSignals] = useState(0);
   const profileVersion = useRef(0);
   const accountPrompted = useRef(false);
+  const queueRef = useRef(demoCards);
   const [syncState, setSyncState] = useState<SyncState>("loading");
   const [locationState, setLocationState] = useState<LocationState>("idle");
   const [coordinates, setCoordinates] = useState<Coordinates | undefined>();
+  const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
+  const [pendingPassCard, setPendingPassCard] = useState<DiscoveryCard | null>(
+    null,
+  );
+  const [flash, setFlash] = useState<string | null>(null);
+  const [railTab, setRailTab] = useState<"shortlist" | "taste">("shortlist");
+  const [reasonOfferCard, setReasonOfferCard] = useState<DiscoveryCard | null>(
+    null,
+  );
+  const flashTimer = useRef<number | null>(null);
 
   const current = queue[0];
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
   const tasteProgress = Math.min(92, 18 + signals * 11);
   const currentMatch = current ? scoreTasteCard(current, learnedWeights) : 0;
   const visibleTasteSignals =
@@ -346,10 +382,6 @@ export function DiscoveryDemo() {
         ? `${restrictionLabel(dietaryRestrictions[0])} saved`
         : "No dietary filters saved";
 
-  const supportingCards = useMemo(() => {
-    const source = queue.length > 1 ? queue.slice(1) : demoCards;
-    return source.slice(0, 3);
-  }, [queue]);
   const savedCards = useMemo(
     () => demoCards.filter((card) => saved.includes(card.restaurantId)),
     [saved],
@@ -372,13 +404,22 @@ export function DiscoveryDemo() {
         setQueue(cards);
         return cards;
       } catch {
-        // The local demo catalog remains available while durable feed storage
-        // reconnects. It is never used to weaken allergy or ownership policy.
         return undefined;
       }
     },
     [coordinates, occasion],
   );
+
+  function showFlash(message: string, offerReasonFor?: DiscoveryCard) {
+    if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    setFlash(message);
+    setReasonOfferCard(offerReasonFor ?? null);
+    flashTimer.current = window.setTimeout(() => {
+      setFlash(null);
+      setReasonOfferCard(null);
+      flashTimer.current = null;
+    }, offerReasonFor ? 4200 : 2200);
+  }
 
   function useMyLocation() {
     if (!navigator.geolocation) {
@@ -487,18 +528,6 @@ export function DiscoveryDemo() {
     };
   }, []);
 
-  useEffect(() => {
-    function closeDrawers(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      setSettingsOpen(false);
-      setAccountOpen(false);
-      setShortlistOpen(false);
-      setDetailOpen(false);
-    }
-    document.addEventListener("keydown", closeDrawers);
-    return () => document.removeEventListener("keydown", closeDrawers);
-  }, []);
-
   function applyProfile(profile: PublicTasteProfile) {
     if (profile.version < profileVersion.current) return;
     setLearnedWeights(profile.learnedWeights);
@@ -542,7 +571,7 @@ export function DiscoveryDemo() {
         profile: PublicTasteProfile;
       };
       applyProfile(result.profile);
-      setSettingsOpen(false);
+      setSheet("none");
       setSyncState("saved");
       setStatus(
         showUnknownAllergyMatches
@@ -558,7 +587,7 @@ export function DiscoveryDemo() {
   }
 
   function openAccount() {
-    setAccountOpen(true);
+    setSheet("account");
     setDeleteConfirm(false);
     void fetch("/api/v1/account")
       .then(async (response) => {
@@ -573,9 +602,8 @@ export function DiscoveryDemo() {
     try {
       const response = await fetch("/api/v1/account", { method: "DELETE" });
       if (!response.ok) throw new Error("Deletion unavailable");
-      setAccountOpen(false);
+      closeSheet();
       setAccount(null);
-      setDeleteConfirm(false);
       setSaved([]);
       setLearnedWeights({});
       setTasteSignals([]);
@@ -585,6 +613,7 @@ export function DiscoveryDemo() {
       setShowUnknownAllergyMatches(true);
       setAllergenStrictness("dish-aware");
       setQueue(demoCards);
+      setUndoStack([]);
       setStatus("Your saved discovery data has been deleted.");
     } catch {
       setStatus("Your data could not be deleted yet.");
@@ -627,29 +656,143 @@ export function DiscoveryDemo() {
       .catch(() => setSyncState("unavailable"));
   }
 
-  function moveCard(action: "pass" | "like") {
-    if (!current) return;
-    remember(action, current);
+  function advanceQueue(removed: DiscoveryCard) {
     setQueue((cards) => {
-      const next = cards.length > 1 ? cards.slice(1) : demoCards;
-      return next;
+      const next = cards.filter((card) => card.id !== removed.id);
+      return next.length > 0 ? next : demoCards;
     });
-    setSignals((value) => value + 1);
-    if (
-      signals >= 4 &&
-      !account?.authenticated &&
-      !accountPrompted.current
-    ) {
+  }
+
+  function maybePromptAccount() {
+    if (signals >= 4 && !account?.authenticated && !accountPrompted.current) {
       accountPrompted.current = true;
       openAccount();
     }
-    setDetailOpen(false);
+  }
+
+  function closeSheet() {
+    setSheet("none");
+    setPendingPassCard(null);
+    setDeleteConfirm(false);
+  }
+
+  function openPassReason(card: DiscoveryCard) {
+    setPendingPassCard(card);
+    setReasonOfferCard(null);
+    setFlash(null);
+    setSheet("pass-reason");
+  }
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") closeSheet();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
+
+  function commitSwipe(
+    action: "pass" | "like" | "never_show",
+    card: DiscoveryCard,
+    reasonCode?: string,
+  ) {
+    remember(action, card, reasonCode);
+    setUndoStack((stack) => [...stack.slice(-4), { card, action }]);
+    advanceQueue(card);
+    setSignals((value) => value + 1);
     setPlaceDetails(null);
+    if (sheet === "detail") setSheet("none");
+    maybePromptAccount();
+
+    if (action === "like") {
+      setStatus(
+        `Got it — more ${card.cuisine.toLowerCase()} and ${card.tags[0].toLowerCase()} picks.`,
+      );
+      showFlash("More like this");
+    } else if (action === "never_show") {
+      setStatus(`${card.restaurant} will stay out of your feed.`);
+      showFlash("Hidden for good");
+    } else {
+      setStatus(
+        "Noted for this moment. We will keep your broader taste profile open.",
+      );
+      showFlash("Not now", card);
+    }
+  }
+
+  function handleDeckSwipe(direction: SwipeDirection) {
+    const card = queueRef.current[0];
+    if (!card) return;
+
+    if (direction === "right") {
+      commitSwipe("like", card);
+      return;
+    }
+
+    remember("pass", card);
+    setUndoStack((stack) => [...stack.slice(-4), { card, action: "pass" }]);
+    advanceQueue(card);
+    setSignals((value) => value + 1);
+    setPlaceDetails(null);
+    if (sheet === "detail") setSheet("none");
+    maybePromptAccount();
     setStatus(
-      action === "like"
-        ? `Got it — more ${current.cuisine.toLowerCase()} and ${current.tags[0].toLowerCase()} picks.`
-        : "Noted for this moment. We will keep your broader taste profile open.",
+      "Noted for this moment. We will keep your broader taste profile open.",
     );
+    showFlash("Not now", card);
+  }
+
+  function undoLast() {
+    const last = undoStack[undoStack.length - 1];
+    if (!last) return;
+    setUndoStack((stack) => stack.slice(0, -1));
+    setQueue((cards) => [last.card, ...cards.filter((c) => c.id !== last.card.id)]);
+    setSheet("none");
+    setPendingPassCard(null);
+    setReasonOfferCard(null);
+    setStatus(`Restored ${last.card.dish}.`);
+    showFlash("Undo");
+  }
+
+  function applyPassReason(code: string) {
+    if (pendingPassCard) {
+      remember("pass", pendingPassCard, code);
+      setStatus(`Thanks — we'll weigh “${code.replaceAll("_", " ")}” lightly.`);
+      showFlash("Thanks");
+    }
+    setPendingPassCard(null);
+    setSheet("none");
+  }
+
+  function hideForever(card = pendingPassCard ?? current) {
+    if (!card) return;
+    setPendingPassCard(null);
+    setReasonOfferCard(null);
+    setSheet("none");
+
+    const alreadyPassed = undoStack.some(
+      (entry) =>
+        entry.card.id === card.id &&
+        (entry.action === "pass" || entry.action === "never_show"),
+    );
+
+    if (alreadyPassed) {
+      remember("never_show", card);
+      setUndoStack((stack) => {
+        const copy = [...stack];
+        const index = copy.findLastIndex((entry) => entry.card.id === card.id);
+        if (index >= 0) {
+          copy[index] = { card, action: "never_show" };
+        }
+        return copy;
+      });
+      setStatus(`${card.restaurant} will stay out of your feed.`);
+      showFlash("Hidden for good");
+      maybePromptAccount();
+      return;
+    }
+
+    commitSwipe("never_show", card);
   }
 
   function toggleSave(card = current) {
@@ -662,11 +805,7 @@ export function DiscoveryDemo() {
     );
     remember(wasSaved ? "unsave" : "save", card);
     setSignals((value) => value + 1);
-    if (
-      !wasSaved &&
-      !account?.authenticated &&
-      !accountPrompted.current
-    ) {
+    if (!wasSaved && !account?.authenticated && !accountPrompted.current) {
       accountPrompted.current = true;
       openAccount();
     }
@@ -675,6 +814,7 @@ export function DiscoveryDemo() {
         ? "Removed from your shortlist."
         : `${card.restaurant} is saved to your shortlist.`,
     );
+    showFlash(wasSaved ? "Removed" : "Saved");
 
     void fetch(`/api/v1/saves/${encodeURIComponent(card.restaurantId)}`, {
       method: wasSaved ? "DELETE" : "PUT",
@@ -700,8 +840,8 @@ export function DiscoveryDemo() {
 
   function openDetails() {
     if (!current) return;
-    if (!detailOpen) remember("detail", current);
-    setDetailOpen(true);
+    if (sheet !== "detail") remember("detail", current);
+    setSheet("detail");
     setPlaceDetails(null);
 
     void fetch(
@@ -752,7 +892,7 @@ export function DiscoveryDemo() {
         learnedWeights,
       ),
     );
-    setDetailOpen(false);
+    setSheet("none");
     setSignals((value) => value + 1);
     setStatus(
       localMatches.length > 0
@@ -793,292 +933,95 @@ export function DiscoveryDemo() {
       });
   }
 
+  const sheetOpen = sheet !== "none";
+
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <a className="working-mark" href="#discover" aria-label="Food discovery home">
-          <span className="mark-dot" />
-          FOOD / NEARBY
-          <small>working title</small>
-        </a>
-        <nav className="topnav" aria-label="Primary navigation">
-          <a className="active" href="#discover">
-            Discover
+    <main className="app-shell tinder-shell">
+      <div className="sr-product-copy" aria-hidden="true">
+        <h1>Find the food you mean.</h1>
+        <p>
+          Swipe through independent restaurants, cafés, boba shops, and other
+          neighborhood finds.
+        </p>
+        <p>
+          Major chains and franchises are removed before recommendations are
+          ranked.
+        </p>
+      </div>
+
+      <aside className="match-rail" aria-label="Shortlist and taste">
+        <div className="match-rail__brand">
+          <a className="brand-mark" href="#discover" aria-label="Food discovery home">
+            <span className="brand-mark__glyph" aria-hidden="true" />
+            <span className="brand-mark__text">
+              <strong>FOOD / NEARBY</strong>
+              <small>working title</small>
+            </span>
           </a>
-          <button type="button" onClick={() => setShortlistOpen(true)}>
-            Shortlist {saved.length > 0 && `(${saved.length})`}
+        </div>
+
+        <div className="match-rail__tabs" role="tablist" aria-label="Sidebar">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={railTab === "shortlist"}
+            className={railTab === "shortlist" ? "selected" : ""}
+            onClick={() => setRailTab("shortlist")}
+          >
+            Shortlist {saved.length > 0 ? saved.length : ""}
           </button>
           <button
-            className="avatar"
-            aria-label="Open profile"
-            onClick={openAccount}
             type="button"
+            role="tab"
+            aria-selected={railTab === "taste"}
+            className={railTab === "taste" ? "selected" : ""}
+            onClick={() => setRailTab("taste")}
           >
-            BZ
+            Taste
           </button>
-        </nav>
-      </header>
+        </div>
 
-      <section className="workspace" id="discover">
-        <aside className="intro-panel">
-          <p className="eyebrow">SAN FRANCISCO · LOCAL DISCOVERY</p>
-          <h1>
-            Find the food
-            <br />
-            you mean.
-          </h1>
-          <p className="intro-copy">
-            Swipe through independent restaurants, cafés, boba shops, and other
-            neighborhood finds. Ask when you already have a craving. Every
-            choice makes the next one sharper.
-          </p>
-
-          <div className="filter-list" aria-label="Choose a meal">
-            <span className="eyebrow">HUNGRY FOR</span>
-            {mealChoices.map((meal) => (
-              <button
-                className={occasion === meal.key ? "selected" : ""}
-                key={meal.key}
-                onClick={() => chooseOccasion(meal.key)}
-                type="button"
-                aria-pressed={occasion === meal.key}
-              >
-                {occasion === meal.key ? "✓ " : "+ "}
-                {meal.label}
-              </button>
-            ))}
-          </div>
-
-          <form className="prompt-box" onSubmit={submitPrompt}>
-            <label htmlFor="food-prompt">What sounds good?</label>
-            <div className="prompt-row">
-              <input
-                id="food-prompt"
-                type="search"
-                autoComplete="off"
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                placeholder="Oolong boba or a quiet café…"
-              />
-              <button type="submit" aria-label="Search">
-                ↗
-              </button>
-            </div>
-            <p>Try “cozy café,” “boba under $10,” or “spicy noodles.”</p>
-          </form>
-
-          {interpretedChips.length > 0 && (
-            <div className="intent-chips" aria-label="Interpreted search filters">
-              <span>UNDERSTOOD AS</span>
-              <div>
-                {interpretedChips.map((chip) => (
-                  <span key={chip.key}>{chip.label}</span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="filter-list" aria-label="Discovery filters">
-            {filters.map((filter) => (
-              <button
-                className={activeFilters.includes(filter) ? "selected" : ""}
-                key={filter}
-                onClick={() => toggleFilter(filter)}
-                type="button"
-                aria-pressed={activeFilters.includes(filter)}
-              >
-                {activeFilters.includes(filter) ? "✓ " : "+ "}
-                {filter}
-              </button>
-            ))}
-          </div>
-
-          <div className="locality-rule">
-            <span>LOCAL-FIRST</span>
-            <p>
-              Major chains and franchises are removed before recommendations
-              are ranked.
-            </p>
-          </div>
-
-          <button
-            className={`location-button ${locationState}`}
-            type="button"
-            onClick={useMyLocation}
-            disabled={locationState === "loading"}
-          >
-            <span aria-hidden="true">⌖</span>
-            {locationState === "loading"
-              ? "Finding your area…"
-              : locationState === "active"
-                ? "Using your location · refresh"
-                : "Use my location"}
-          </button>
-
-          <div className="safety-note">
-            <span className="safety-icon">!</span>
-            <div>
-              <strong>{safetyTitle}</strong>
-              <p>
-                {showUnknownAllergyMatches
-                  ? "Unknown information stays visible with a warning."
-                  : "Places with unknown information stay hidden."}
+        {railTab === "shortlist" ? (
+          <div className="match-rail__list">
+            {savedCards.length === 0 ? (
+              <p className="match-rail__empty">
+                Heart spots you might go to. They land here so you can decide
+                later.
               </p>
-            </div>
-            <button
-              aria-label="Edit allergy settings"
-              onClick={() => setSettingsOpen(true)}
-              type="button"
-            >
-              Edit
-            </button>
+            ) : (
+              savedCards.map((card) => (
+                <button
+                  key={card.restaurantId}
+                  type="button"
+                  className="match-rail__item"
+                  onClick={() => {
+                    setQueue([
+                      card,
+                      ...demoCards.filter((item) => item.id !== card.id),
+                    ]);
+                    setStatus(`${card.restaurant} is ready to revisit.`);
+                  }}
+                >
+                  <span
+                    className="mini-image"
+                    style={{ backgroundImage: `url(${card.imageUrl})` }}
+                  />
+                  <span>
+                    <strong>{card.restaurant}</strong>
+                    <small>
+                      {card.dish} · {card.neighborhood}
+                    </small>
+                  </span>
+                </button>
+              ))
+            )}
           </div>
-        </aside>
-
-        <section className="feed-stage" aria-label="Restaurant discovery feed">
-          <div className="feed-meta">
-            <div>
-              <span>FOR YOU</span>
-              <strong role="status" aria-live="polite">
-                {status}
-              </strong>
-            </div>
-            <p>{queue.length} picks in this set</p>
-          </div>
-
-          {current ? (
-            <article className="food-card">
-            <div
-              className="food-image"
-              style={{ backgroundImage: `url(${current.imageUrl})` }}
-              role="img"
-              aria-label={`Illustrative photo for ${current.dish}`}
-            >
-              <div className="card-scrim" />
-              <div className="card-topline">
-                <span className="match-pill">{currentMatch}% MATCH</span>
-                <span className="distance-pill">{current.distance}</span>
-              </div>
-              <div className="card-copy">
-                <p>
-                  {venueLabel(current.venueType)} · {current.cuisine} ·{" "}
-                  {current.price}
-                </p>
-                <h2>{current.dish}</h2>
-                <h3>{current.restaurant}</h3>
-                <small className="locality-caption">
-                  {current.localityLabel}
-                </small>
-                <div className="tag-row">
-                  {current.tags.map((tag) => (
-                    <span key={tag}>{tag}</span>
-                  ))}
-                </div>
-              </div>
-              <a
-                className="photo-credit"
-                href={current.photoCreditUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Demo photo · Unsplash
-              </a>
-            </div>
-
-            <div className="evidence-strip">
-              <div>
-                <span className={current.allergyStatus === "verified" ? "verified" : "unknown"}>
-                  {current.allergyStatus === "verified" ? "✓" : "!"}
-                </span>
-                <p>
-                  <strong>{current.allergyLabel}</strong>
-                  <small>{current.allergyDetail}</small>
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={openDetails}
-              >
-                Evidence
-              </button>
-            </div>
-
-            <div className="card-actions">
-              <button
-                className="pass"
-                type="button"
-                onClick={() => moveCard("pass")}
-                aria-label="Pass for now"
-              >
-                ×
-                <span>Not now</span>
-              </button>
-              <button
-                className={
-                  saved.includes(current.restaurantId) ? "save saved" : "save"
-                }
-                type="button"
-                onClick={() => toggleSave(current)}
-                aria-label="Save restaurant"
-                aria-pressed={saved.includes(current.restaurantId)}
-              >
-                {saved.includes(current.restaurantId) ? "♥" : "♡"}
-                <span>Save</span>
-              </button>
-              <button
-                className="like"
-                type="button"
-                onClick={() => moveCard("like")}
-                aria-label="Show more like this"
-              >
-                →
-                <span>More like this</span>
-              </button>
-            </div>
-            </article>
-          ) : (
-            <div className="empty-feed">
-              <span aria-hidden="true">○</span>
-              <h2>No reviewed match in this set.</h2>
-              <p>
-                Your locality and safety rules stayed in place. Clear the
-                location and filters to return to the San Francisco pilot.
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setCoordinates(undefined);
-                  setLocationState("idle");
-                  setActiveFilters([]);
-                  setQueue(rankTasteCards(demoCards, learnedWeights));
-                  setStatus("Showing the full reviewed San Francisco pilot.");
-                }}
-              >
-                Show pilot catalog
-              </button>
-            </div>
-          )}
-        </section>
-
-        <aside className="taste-panel">
-          <div className="taste-card">
+        ) : (
+          <div className="match-rail__taste">
             <div className="taste-heading">
-              <p className="eyebrow">YOUR TASTE / BETA</p>
-              <span>{tasteProgress}%</span>
+              <span>Taste memory</span>
+              <strong>{tasteProgress}%</strong>
             </div>
-            <h2>Getting warmer.</h2>
-            <p>
-              {signals < 3
-                ? "A few more choices will help separate everyday favorites from today’s mood."
-                : "Your saved taste profile now reorders the local feed across meals, coffee, and drinks."}
-            </p>
-            <p className={`sync-state ${syncState}`}>
-              {syncState === "loading" && "Loading saved taste…"}
-              {syncState === "saving" && "Saving this signal…"}
-              {syncState === "saved" && "Taste memory saved"}
-              {syncState === "unavailable" &&
-                "Taste memory will retry when storage reconnects"}
-            </p>
             <div className="progress-track">
               <span style={{ width: `${tasteProgress}%` }} />
             </div>
@@ -1086,422 +1029,778 @@ export function DiscoveryDemo() {
               {visibleTasteSignals.map((signal) => (
                 <span key={signal}>{signal}</span>
               ))}
-              <span className="muted">Fine dining</span>
             </div>
-          </div>
-
-          <div className="next-list">
-            <div className="section-label">
-              <span>MORE LOCAL PICKS</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setCoordinates(undefined);
-                  setLocationState("idle");
-                  setQueue(rankTasteCards(demoCards, learnedWeights));
-                  setStatus("Showing the full reviewed San Francisco pilot.");
-                }}
-              >
-                View all
-              </button>
-            </div>
-            {supportingCards.map((card, index) => (
-              <button
-                className="mini-card"
-                key={`${card.id}-${index}`}
-                type="button"
-                onClick={() =>
-                  setQueue([
-                    card,
-                    ...demoCards.filter((item) => item.id !== card.id),
-                  ])
-                }
-              >
-                <span
-                  className="mini-image"
-                  style={{ backgroundImage: `url(${card.imageUrl})` }}
-                />
-                <span>
-                  <strong>{card.dish}</strong>
-                  <small>
-                    {card.restaurant} · {card.distance}
-                  </small>
-                </span>
-                <b>{scoreTasteCard(card, learnedWeights)}%</b>
-              </button>
-            ))}
-          </div>
-
-          <div className="product-principle">
-            <span>01</span>
-            <p>
-              Eligibility comes first. <strong>Chains and franchises stay out</strong>{" "}
-              even when an algorithm predicts a match.
+            <p className={`sync-state ${syncState}`}>
+              {syncState === "loading" && "Loading saved taste…"}
+              {syncState === "saving" && "Saving this signal…"}
+              {syncState === "saved" && "Taste memory saved"}
+              {syncState === "unavailable" &&
+                "Taste memory will retry when storage reconnects"}
             </p>
+            <div className="locality-rule">
+              <span>LOCAL-FIRST</span>
+              <p>
+                Major chains and franchises are removed before recommendations
+                are ranked.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="rail-link"
+              onClick={() => setSheet("settings")}
+            >
+              Safety settings
+            </button>
           </div>
-        </aside>
+        )}
+
+        <div className="match-rail__footer">
+          <button type="button" onClick={() => setSheet("craving")}>
+            Craving
+          </button>
+          <button type="button" onClick={openAccount}>
+            Profile
+          </button>
+        </div>
+      </aside>
+
+      <section className="deck-stage" id="discover" aria-label="Restaurant discovery feed">
+        <header className="deck-topbar">
+          <button
+            type="button"
+            className="mobile-only rail-open"
+            onClick={() => setSheet("shortlist")}
+          >
+            Shortlist{saved.length > 0 ? ` (${saved.length})` : ""}
+          </button>
+          <div className="meal-rail" aria-label="Choose a meal">
+            <span className="eyebrow">HUNGRY FOR</span>
+            <div className="meal-rail__chips">
+              {mealChoices.map((meal) => (
+                <button
+                  className={occasion === meal.key ? "selected" : ""}
+                  key={meal.key}
+                  onClick={() => chooseOccasion(meal.key)}
+                  type="button"
+                  aria-pressed={occasion === meal.key}
+                >
+                  {meal.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="deck-topbar__actions">
+            <button type="button" onClick={() => setSheet("craving")}>
+              Craving
+            </button>
+            <button
+              className="avatar"
+              aria-label="Open profile"
+              onClick={openAccount}
+              type="button"
+            >
+              You
+            </button>
+          </div>
+        </header>
+
+        <div className="feed-meta">
+          <strong role="status" aria-live="polite">
+            {status}
+          </strong>
+          <p>{queue.length} picks left</p>
+        </div>
+
+        {current ? (
+          <>
+            <SwipeDeck
+              key={current.id}
+              cards={queue}
+              matchScore={currentMatch}
+              isSaved={saved.includes(current.restaurantId)}
+              onSwipe={handleDeckSwipe}
+              onOpenDetails={openDetails}
+            />
+
+            <div className="evidence-strip">
+              <div>
+                <span
+                  className={
+                    current.allergyStatus === "verified" ? "verified" : "unknown"
+                  }
+                >
+                  {current.allergyStatus === "verified" ? "✓" : "!"}
+                </span>
+                <p>
+                  <strong>{current.allergyLabel}</strong>
+                  <small>{current.allergyDetail}</small>
+                </p>
+              </div>
+              <button type="button" onClick={openDetails}>
+                Evidence
+              </button>
+            </div>
+
+            <div className="swipe-actions" aria-label="Card actions">
+              <button
+                className="action-btn action-btn--pass"
+                type="button"
+                onClick={() => handleDeckSwipe("left")}
+                aria-label="Pass for now"
+              >
+                <span aria-hidden="true">×</span>
+                <small>Not now</small>
+              </button>
+              <button
+                className="action-btn action-btn--undo"
+                type="button"
+                onClick={undoLast}
+                disabled={undoStack.length === 0}
+                aria-label="Undo last swipe"
+              >
+                <span aria-hidden="true">↺</span>
+                <small>Undo</small>
+              </button>
+              <button
+                className={`action-btn action-btn--save${saved.includes(current.restaurantId) ? " is-saved" : ""}`}
+                type="button"
+                onClick={() => toggleSave(current)}
+                aria-label="Save restaurant"
+                aria-pressed={saved.includes(current.restaurantId)}
+              >
+                <span aria-hidden="true">
+                  {saved.includes(current.restaurantId) ? "♥" : "♡"}
+                </span>
+                <small>Save</small>
+              </button>
+              <button
+                className="action-btn action-btn--like"
+                type="button"
+                onClick={() => handleDeckSwipe("right")}
+                aria-label="Show more like this"
+              >
+                <span aria-hidden="true">♥</span>
+                <small>More like this</small>
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="empty-feed">
+            <span aria-hidden="true">○</span>
+            <h2>No reviewed match in this set.</h2>
+            <p>
+              Your locality and safety rules stayed in place. Clear the
+              location and filters to return to the San Francisco pilot.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setCoordinates(undefined);
+                setLocationState("idle");
+                setActiveFilters([]);
+                setQueue(rankTasteCards(demoCards, learnedWeights));
+                setStatus("Showing the full reviewed San Francisco pilot.");
+              }}
+            >
+              Show pilot catalog
+            </button>
+          </div>
+        )}
+
+        <p className="safety-inline">
+          <strong>{safetyTitle}</strong>
+          <button type="button" onClick={() => setSheet("settings")}>
+            Edit
+          </button>
+        </p>
       </section>
 
-      {settingsOpen && (
-        <section
-          className="settings-drawer"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="settings-title"
-        >
+      {flash && (
+        <div className="toast" role="status" aria-live="polite">
+          <span>{flash}</span>
+          {reasonOfferCard && (
+            <button
+              type="button"
+              className="toast__action"
+              onClick={() => openPassReason(reasonOfferCard)}
+            >
+              Why?
+            </button>
+          )}
+        </div>
+      )}
+
+      {sheetOpen && (
+        <button
+          className="sheet-backdrop"
+          type="button"
+          aria-label="Close panel"
+          onClick={closeSheet}
+        />
+      )}
+
+      <section
+        className={`sheet sheet--craving${sheet === "craving" ? " is-open" : ""}`}
+        role="dialog"
+        aria-modal={sheet === "craving"}
+        aria-labelledby="craving-title"
+        aria-hidden={sheet !== "craving"}
+        inert={sheet !== "craving" ? true : undefined}
+      >
+        <div className="sheet__handle" aria-hidden="true" />
+        <div className="sheet__header">
+          <div>
+            <p className="eyebrow">ASK OR FILTER</p>
+            <h2 id="craving-title">What sounds good?</h2>
+          </div>
           <button
             className="drawer-close"
             type="button"
-            onClick={() => setSettingsOpen(false)}
+            onClick={closeSheet}
+            aria-label="Close craving panel"
+          >
+            ×
+          </button>
+        </div>
+
+        <form className="prompt-box" onSubmit={submitPrompt}>
+          <label htmlFor="food-prompt">What sounds good?</label>
+          <div className="prompt-row">
+            <input
+              id="food-prompt"
+              type="search"
+              autoComplete="off"
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              placeholder="Oolong boba or a quiet café…"
+            />
+            <button type="submit" aria-label="Search">
+              ↗
+            </button>
+          </div>
+          <p>Try “cozy café,” “boba under $10,” or “spicy noodles.”</p>
+        </form>
+
+        {interpretedChips.length > 0 && (
+          <div className="intent-chips" aria-label="Interpreted search filters">
+            <span>UNDERSTOOD AS</span>
+            <div>
+              {interpretedChips.map((chip) => (
+                <span key={chip.key}>{chip.label}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="filter-list" aria-label="Discovery filters">
+          {filters.map((filter) => (
+            <button
+              className={activeFilters.includes(filter) ? "selected" : ""}
+              key={filter}
+              onClick={() => toggleFilter(filter)}
+              type="button"
+              aria-pressed={activeFilters.includes(filter)}
+            >
+              {activeFilters.includes(filter) ? "✓ " : "+ "}
+              {filter}
+            </button>
+          ))}
+        </div>
+
+        <button
+          className={`location-button ${locationState}`}
+          type="button"
+          onClick={useMyLocation}
+          disabled={locationState === "loading"}
+        >
+          <span aria-hidden="true">⌖</span>
+          {locationState === "loading"
+            ? "Finding your area…"
+            : locationState === "active"
+              ? "Using your location · refresh"
+              : "Use my location"}
+        </button>
+
+        <div className="safety-note">
+          <span className="safety-icon">!</span>
+          <div>
+            <strong>{safetyTitle}</strong>
+            <p>
+              {showUnknownAllergyMatches
+                ? "Unknown information stays visible with a warning."
+                : "Places with unknown information stay hidden."}
+            </p>
+          </div>
+          <button
+            aria-label="Edit allergy settings"
+            onClick={() => setSheet("settings")}
+            type="button"
+          >
+            Edit
+          </button>
+        </div>
+      </section>
+
+      <section
+        className={`sheet${sheet === "pass-reason" ? " is-open" : ""}`}
+        role="dialog"
+        aria-modal={sheet === "pass-reason"}
+        aria-labelledby="pass-reason-title"
+        aria-hidden={sheet !== "pass-reason"}
+        inert={sheet !== "pass-reason" ? true : undefined}
+      >
+        <div className="sheet__handle" aria-hidden="true" />
+        <div className="sheet__header">
+          <div>
+            <p className="eyebrow">OPTIONAL</p>
+            <h2 id="pass-reason-title">Why not now?</h2>
+          </div>
+          <button
+            className="drawer-close"
+            type="button"
+            onClick={closeSheet}
+            aria-label="Close reason sheet"
+          >
+            ×
+          </button>
+        </div>
+        <p className="settings-intro">
+          Left means this moment, not forever. A quick reason helps without
+          permanently burying a cuisine.
+        </p>
+        <div className="reason-grid">
+          {passReasons.map((reason) => (
+            <button
+              key={reason.code}
+              type="button"
+              onClick={() => applyPassReason(reason.code)}
+            >
+              {reason.label}
+            </button>
+          ))}
+        </div>
+        <button
+          className="never-show"
+          type="button"
+          onClick={() => hideForever()}
+        >
+          Never show this place
+        </button>
+        <button className="sheet-skip" type="button" onClick={closeSheet}>
+          Skip
+        </button>
+      </section>
+
+      <section
+        className={`sheet sheet--tall${sheet === "settings" ? " is-open" : ""}`}
+        role="dialog"
+        aria-modal={sheet === "settings"}
+        aria-labelledby="settings-title"
+        aria-hidden={sheet !== "settings"}
+        inert={sheet !== "settings" ? true : undefined}
+      >
+        <div className="sheet__handle" aria-hidden="true" />
+        <div className="sheet__header">
+          <div>
+            <p className="eyebrow">YOUR SAFETY SETTINGS</p>
+            <h2 id="settings-title">What should we screen for?</h2>
+          </div>
+          <button
+            className="drawer-close"
+            type="button"
+            onClick={closeSheet}
             aria-label="Close dietary settings"
           >
             ×
           </button>
-          <p className="eyebrow">YOUR SAFETY SETTINGS</p>
-          <h2 id="settings-title">What should we screen for?</h2>
-          <p className="settings-intro">
-            Known conflicts are always removed before ranking. This cannot
-            replace confirming severe allergies directly with a business.
-          </p>
+        </div>
+        <p className="settings-intro">
+          Known conflicts are always removed before ranking. This cannot
+          replace confirming severe allergies directly with a business.
+        </p>
 
-          <fieldset className="settings-group">
-            <legend>Allergens</legend>
-            <div className="settings-options">
-              {allergenOptions.map((option) => (
-                <label key={option.key}>
-                  <input
-                    type="checkbox"
-                    checked={allergens.includes(option.key)}
-                    onChange={() =>
-                      toggleSetting(option.key, allergens, setAllergens)
-                    }
-                  />
-                  <span>{option.label}</span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
+        <fieldset className="settings-group">
+          <legend>Allergens</legend>
+          <div className="settings-options">
+            {allergenOptions.map((option) => (
+              <label key={option.key}>
+                <input
+                  type="checkbox"
+                  checked={allergens.includes(option.key)}
+                  onChange={() =>
+                    toggleSetting(option.key, allergens, setAllergens)
+                  }
+                />
+                <span>{option.label}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
-          <fieldset className="settings-group">
-            <legend>Dietary preferences</legend>
-            <div className="settings-options">
-              {dietaryOptions.map((option) => (
-                <label key={option.key}>
-                  <input
-                    type="checkbox"
-                    checked={dietaryRestrictions.includes(option.key)}
-                    onChange={() =>
-                      toggleSetting(
-                        option.key,
-                        dietaryRestrictions,
-                        setDietaryRestrictions,
-                      )
-                    }
-                  />
-                  <span>{option.label}</span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
+        <fieldset className="settings-group">
+          <legend>Dietary preferences</legend>
+          <div className="settings-options">
+            {dietaryOptions.map((option) => (
+              <label key={option.key}>
+                <input
+                  type="checkbox"
+                  checked={dietaryRestrictions.includes(option.key)}
+                  onChange={() =>
+                    toggleSetting(
+                      option.key,
+                      dietaryRestrictions,
+                      setDietaryRestrictions,
+                    )
+                  }
+                />
+                <span>{option.label}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
-          <label className="unknown-toggle">
-            <input
-              type="checkbox"
-              checked={showUnknownAllergyMatches}
-              onChange={(event) =>
-                setShowUnknownAllergyMatches(event.target.checked)
-              }
-            />
-            <span>
-              <strong>Show places with unknown evidence</strong>
-              Keep them visible with a persistent warning instead of treating
-              missing information as safe.
-            </span>
-          </label>
+        <label className="unknown-toggle">
+          <input
+            type="checkbox"
+            checked={showUnknownAllergyMatches}
+            onChange={(event) =>
+              setShowUnknownAllergyMatches(event.target.checked)
+            }
+          />
+          <span>
+            <strong>Show places with unknown evidence</strong>
+            Keep them visible with a persistent warning instead of treating
+            missing information as safe.
+          </span>
+        </label>
 
-          <label className="unknown-toggle">
-            <input
-              type="checkbox"
-              checked={allergenStrictness === "strict"}
-              onChange={(event) =>
-                setAllergenStrictness(
-                  event.target.checked ? "strict" : "dish-aware",
-                )
-              }
-            />
-            <span>
-              <strong>Strict whole-place allergy screening</strong>
-              Hide a restaurant when shared-kitchen or cross-contact evidence
-              is unknown. Leave this off to evaluate each dish separately and
-              keep the restaurant visible with a warning.
-            </span>
-          </label>
+        <label className="unknown-toggle">
+          <input
+            type="checkbox"
+            checked={allergenStrictness === "strict"}
+            onChange={(event) =>
+              setAllergenStrictness(
+                event.target.checked ? "strict" : "dish-aware",
+              )
+            }
+          />
+          <span>
+            <strong>Strict whole-place allergy screening</strong>
+            Hide a restaurant when shared-kitchen or cross-contact evidence
+            is unknown. Leave this off to evaluate each dish separately and
+            keep the restaurant visible with a warning.
+          </span>
+        </label>
 
-          <button
-            className="settings-save"
-            type="button"
-            onClick={() => void saveSafetySettings()}
-            disabled={settingsSaving}
-          >
-            {settingsSaving ? "Saving…" : "Save safety settings"}
-          </button>
-        </section>
-      )}
-
-      {accountOpen && (
-        <section
-          className="account-drawer"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="account-title"
+        <button
+          className="settings-save"
+          type="button"
+          onClick={() => void saveSafetySettings()}
+          disabled={settingsSaving}
         >
+          {settingsSaving ? "Saving…" : "Save safety settings"}
+        </button>
+      </section>
+
+      <section
+        className={`sheet sheet--tall${sheet === "account" ? " is-open" : ""}`}
+        role="dialog"
+        aria-modal={sheet === "account"}
+        aria-labelledby="account-title"
+        aria-hidden={sheet !== "account"}
+        inert={sheet !== "account" ? true : undefined}
+      >
+        <div className="sheet__handle" aria-hidden="true" />
+        <div className="sheet__header">
+          <div>
+            <p className="eyebrow">ACCOUNT / PRIVACY</p>
+            <h2 id="account-title">Your discovery data.</h2>
+          </div>
           <button
             className="drawer-close"
             type="button"
-            onClick={() => setAccountOpen(false)}
+            onClick={closeSheet}
             aria-label="Close account"
           >
             ×
           </button>
-          <p className="eyebrow">ACCOUNT / PRIVACY</p>
-          <h2 id="account-title">Your discovery data.</h2>
-          <p className="settings-intro">
-            Discovery works without an account. This release keeps taste
-            history and the shortlist private to this browser. Account sign-in
-            is temporarily disabled until the public Worker has a verified
-            authentication gateway.
+        </div>
+        <p className="settings-intro">
+          Discovery works without an account. This release keeps taste
+          history and the shortlist private to this browser. Account sign-in
+          is temporarily disabled until the public Worker has a verified
+          authentication gateway.
+        </p>
+
+        <div className="account-stats">
+          <div>
+            <span>Identity</span>
+            <strong>
+              {account?.authenticated ? "Signed in" : "Private guest"}
+            </strong>
+          </div>
+          <div>
+            <span>Saved places</span>
+            <strong>{account?.savedCount ?? saved.length}</strong>
+          </div>
+          <div>
+            <span>Taste signals</span>
+            <strong>{account?.interactionCount ?? signals}</strong>
+          </div>
+        </div>
+
+        <div className="account-actions">
+          {account?.authenticated ? (
+            <span>Signed-in session</span>
+          ) : (
+            <span>Private guest mode</span>
+          )}
+          <a href="/api/v1/account/export">Download my data</a>
+        </div>
+
+        <div className="danger-zone">
+          <strong>Delete discovery data</strong>
+          <p>
+            Removes your taste profile, interactions, and shortlist. This
+            cannot be undone.
           </p>
-
-          <div className="account-stats">
+          {deleteConfirm ? (
             <div>
-              <span>Identity</span>
-              <strong>
-                {account?.authenticated ? "Signed in" : "Private guest"}
-              </strong>
-            </div>
-            <div>
-              <span>Saved places</span>
-              <strong>{account?.savedCount ?? saved.length}</strong>
-            </div>
-            <div>
-              <span>Taste signals</span>
-              <strong>{account?.interactionCount ?? signals}</strong>
-            </div>
-          </div>
-
-          <div className="account-actions">
-            {account?.authenticated ? (
-              <span>Signed-in session</span>
-            ) : (
-              <span>Private guest mode</span>
-            )}
-            <a href="/api/v1/account/export">Download my data</a>
-          </div>
-
-          <div className="danger-zone">
-            <strong>Delete discovery data</strong>
-            <p>
-              Removes your taste profile, interactions, and shortlist. This
-              cannot be undone.
-            </p>
-            {deleteConfirm ? (
-              <div>
-                <button type="button" onClick={() => setDeleteConfirm(false)}>
-                  Cancel
-                </button>
-                <button type="button" onClick={() => void deleteAccount()}>
-                  Confirm permanent deletion
-                </button>
-              </div>
-            ) : (
-              <button type="button" onClick={() => setDeleteConfirm(true)}>
-                Delete my data
+              <button type="button" onClick={() => setDeleteConfirm(false)}>
+                Cancel
               </button>
-            )}
-          </div>
-        </section>
-      )}
+              <button type="button" onClick={() => void deleteAccount()}>
+                Confirm permanent deletion
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setDeleteConfirm(true)}>
+              Delete my data
+            </button>
+          )}
+        </div>
+      </section>
 
-      {shortlistOpen && (
-        <section
-          className="shortlist-drawer"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="shortlist-title"
-        >
+      <section
+        className={`sheet sheet--tall${sheet === "shortlist" ? " is-open" : ""}`}
+        role="dialog"
+        aria-modal={sheet === "shortlist"}
+        aria-labelledby="shortlist-title"
+        aria-hidden={sheet !== "shortlist"}
+        inert={sheet !== "shortlist" ? true : undefined}
+      >
+        <div className="sheet__handle" aria-hidden="true" />
+        <div className="sheet__header">
+          <div>
+            <p className="eyebrow">YOUR SHORTLIST</p>
+            <h2 id="shortlist-title">Saved for later.</h2>
+          </div>
           <button
             className="drawer-close"
             type="button"
-            onClick={() => setShortlistOpen(false)}
+            onClick={closeSheet}
             aria-label="Close shortlist"
           >
             ×
           </button>
-          <p className="eyebrow">YOUR SHORTLIST</p>
-          <h2 id="shortlist-title">Saved for later.</h2>
-          <p className="settings-intro">
-            Your picks stay private to this guest session or move with you when
-            you sign in.
-          </p>
-          {savedCards.length === 0 ? (
-            <div className="shortlist-empty">
-              Save a neighborhood spot and it will appear here.
-            </div>
-          ) : (
-            <div className="saved-list">
-              {savedCards.map((card) => (
-                <div className="saved-row" key={card.restaurantId}>
-                  <button
-                    className="saved-place"
-                    type="button"
-                    onClick={() => {
-                      setQueue([
-                        card,
-                        ...demoCards.filter((item) => item.id !== card.id),
-                      ]);
-                      setShortlistOpen(false);
-                      setStatus(`${card.restaurant} is ready to revisit.`);
-                    }}
-                  >
-                    <span
-                      className="mini-image"
-                      style={{ backgroundImage: `url(${card.imageUrl})` }}
-                    />
-                    <span>
-                      <strong>{card.restaurant}</strong>
-                      <small>
-                        {card.dish} · {card.neighborhood}
-                      </small>
-                    </span>
-                  </button>
-                  <button
-                    className="saved-remove"
-                    type="button"
-                    onClick={() => toggleSave(card)}
-                    aria-label={`Remove ${card.restaurant} from shortlist`}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
+        </div>
+        <p className="settings-intro">
+          Your picks stay private to this guest session or move with you when
+          you sign in. Open a place when you are ready to go.
+        </p>
+        {savedCards.length === 0 ? (
+          <div className="shortlist-empty">
+            Save a neighborhood spot and it will appear here.
+          </div>
+        ) : (
+          <div className="saved-list">
+            {savedCards.map((card) => (
+              <div className="saved-row" key={card.restaurantId}>
+                <button
+                  className="saved-place"
+                  type="button"
+                  onClick={() => {
+                    setQueue([
+                      card,
+                      ...demoCards.filter((item) => item.id !== card.id),
+                    ]);
+                    setSheet("none");
+                    setStatus(`${card.restaurant} is ready to revisit.`);
+                  }}
+                >
+                  <span
+                    className="mini-image"
+                    style={{ backgroundImage: `url(${card.imageUrl})` }}
+                  />
+                  <span>
+                    <strong>{card.restaurant}</strong>
+                    <small>
+                      {card.dish} · {card.neighborhood}
+                    </small>
+                  </span>
+                </button>
+                <button
+                  className="saved-remove"
+                  type="button"
+                  onClick={() => toggleSave(card)}
+                  aria-label={`Remove ${card.restaurant} from shortlist`}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
-      {detailOpen && current && (
-        <section
-          className="detail-drawer"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="detail-title"
-        >
-          <button
-            className="drawer-close"
-            type="button"
-            onClick={() => setDetailOpen(false)}
-            aria-label="Close restaurant details"
-          >
-            ×
-          </button>
-          <p className="eyebrow">RESTAURANT DETAILS · DEMO DATA</p>
-          <h2 id="detail-title">{current.restaurant}</h2>
-          <p className="drawer-address">
-            {venueLabel(current.venueType)} ·{" "}
-            {placeDetails?.address.line1
-              ? `${placeDetails.address.line1}, ${placeDetails.address.city ?? "San Francisco"}`
-              : `${current.neighborhood}, San Francisco`}{" "}
-            · {current.distance}
-          </p>
-          <div className="drawer-grid">
-            <div>
-              <span>Local ownership</span>
-              <strong>{current.localityLabel}</strong>
-            </div>
-            <div>
-              <span>Hours</span>
-              <strong>
-                {placeDetails?.hours.length
-                  ? `${placeDetails.hours.length} verified weekly schedules`
-                  : current.hours}
-              </strong>
-            </div>
-            <div>
-              <span>Service</span>
-              <strong>{current.serviceModes.join(" · ")}</strong>
-            </div>
-            <div>
-              <span>Allergy information</span>
-              <strong>{current.allergyDetail}</strong>
-            </div>
-            <div>
-              <span>Last checked</span>
-              <strong>
-                {current.evidenceVerifiedAt
-                  ? `${current.evidenceSource ?? "Evidence"} · ${new Date(current.evidenceVerifiedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
-                  : "Evidence date unavailable"}
-              </strong>
-            </div>
-            <div>
-              <span>Contact</span>
-              <strong>
-                {placeDetails?.phone ?? "Phone not yet verified"}
-              </strong>
-            </div>
-            <div>
-              <span>Business details checked</span>
-              <strong>
-                {placeDetails?.verifiedAt
-                  ? new Date(placeDetails.verifiedAt).toLocaleDateString(
-                      "en-US",
-                      { month: "short", day: "numeric", year: "numeric" },
-                    )
-                  : "Freshness check pending"}
-              </strong>
-            </div>
-          </div>
-          <div className="drawer-warning">
-            <strong>Always confirm severe allergies with the restaurant.</strong>
-            This prototype never treats missing information as proof of safety.
-          </div>
-          <div className="drawer-actions">
-            {placeDetails?.menuUrl ? (
-              <a
-                href={placeDetails.menuUrl}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => remember("handoff", current, "menu")}
+      <section
+        className={`sheet sheet--tall${sheet === "detail" ? " is-open" : ""}`}
+        role="dialog"
+        aria-modal={sheet === "detail"}
+        aria-labelledby="detail-title"
+        aria-hidden={sheet !== "detail"}
+        inert={sheet !== "detail" ? true : undefined}
+      >
+        <div className="sheet__handle" aria-hidden="true" />
+        {current && (
+          <>
+            <div className="sheet__header">
+              <div>
+                <p className="eyebrow">RESTAURANT DETAILS · DEMO DATA</p>
+                <h2 id="detail-title">{current.restaurant}</h2>
+              </div>
+              <button
+                className="drawer-close"
+                type="button"
+                onClick={closeSheet}
+                aria-label="Close restaurant details"
               >
-                View menu ↗
-              </a>
-            ) : (
-              <span>Menu unavailable</span>
-            )}
-            {placeDetails?.phone ? (
-              <a
-                href={`tel:${placeDetails.phone}`}
-                onClick={() => remember("handoff", current, "call")}
+                ×
+              </button>
+            </div>
+            <p className="drawer-address">
+              {venueLabel(current.venueType)} ·{" "}
+              {placeDetails?.address.line1
+                ? `${placeDetails.address.line1}, ${placeDetails.address.city ?? "San Francisco"}`
+                : `${current.neighborhood}, San Francisco`}{" "}
+              · {current.distance}
+            </p>
+            <div className="drawer-grid">
+              <div>
+                <span>Local ownership</span>
+                <strong>{current.localityLabel}</strong>
+              </div>
+              <div>
+                <span>Hours</span>
+                <strong>
+                  {placeDetails?.hours.length
+                    ? `${placeDetails.hours.length} verified weekly schedules`
+                    : current.hours}
+                </strong>
+              </div>
+              <div>
+                <span>Service</span>
+                <strong>{current.serviceModes.join(" · ")}</strong>
+              </div>
+              <div>
+                <span>Allergy information</span>
+                <strong>{current.allergyDetail}</strong>
+              </div>
+              <div>
+                <span>Last checked</span>
+                <strong>
+                  {current.evidenceVerifiedAt
+                    ? `${current.evidenceSource ?? "Evidence"} · ${new Date(current.evidenceVerifiedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+                    : "Evidence date unavailable"}
+                </strong>
+              </div>
+              <div>
+                <span>Contact</span>
+                <strong>
+                  {placeDetails?.phone ?? "Phone not yet verified"}
+                </strong>
+              </div>
+              <div>
+                <span>Business details checked</span>
+                <strong>
+                  {placeDetails?.verifiedAt
+                    ? new Date(placeDetails.verifiedAt).toLocaleDateString(
+                        "en-US",
+                        { month: "short", day: "numeric", year: "numeric" },
+                      )
+                    : "Freshness check pending"}
+                </strong>
+              </div>
+            </div>
+            <div className="drawer-warning">
+              <strong>
+                Always confirm severe allergies with the restaurant.
+              </strong>
+              This prototype never treats missing information as proof of
+              safety.
+            </div>
+            <div className="drawer-actions">
+              {placeDetails?.menuUrl ? (
+                <a
+                  href={placeDetails.menuUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => remember("handoff", current, "menu")}
+                >
+                  View menu ↗
+                </a>
+              ) : (
+                <span>Menu unavailable</span>
+              )}
+              {placeDetails?.phone ? (
+                <a
+                  href={`tel:${placeDetails.phone}`}
+                  onClick={() => remember("handoff", current, "call")}
+                >
+                  Call business ↗
+                </a>
+              ) : (
+                <span>Phone unavailable</span>
+              )}
+              {placeDetails?.directionsUrl ? (
+                <a
+                  href={placeDetails.directionsUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => remember("handoff", current, "directions")}
+                >
+                  Directions ↗
+                </a>
+              ) : (
+                <span>Directions unavailable</span>
+              )}
+            </div>
+            <div className="detail-quick-actions">
+              <button type="button" onClick={() => toggleSave(current)}>
+                {saved.includes(current.restaurantId)
+                  ? "Remove save"
+                  : "Save to shortlist"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSheet("none");
+                  handleDeckSwipe("right");
+                }}
               >
-                Call business ↗
-              </a>
-            ) : (
-              <span>Phone unavailable</span>
-            )}
-            {placeDetails?.directionsUrl ? (
-              <a
-                href={placeDetails.directionsUrl}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => remember("handoff", current, "directions")}
-              >
-                Directions ↗
-              </a>
-            ) : (
-              <span>Directions unavailable</span>
-            )}
-          </div>
-        </section>
-      )}
+                More like this
+              </button>
+            </div>
+            <button
+              className="never-show never-show--detail"
+              type="button"
+              onClick={() => hideForever(current)}
+            >
+              Never show this place
+            </button>
+          </>
+        )}
+      </section>
 
       <SiteFooter />
     </main>
